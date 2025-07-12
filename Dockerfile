@@ -1,4 +1,4 @@
-FROM runpod/pytorch:2.3.0-py3.10-cuda12.1.1-devel-ubuntu22.04
+FROM runpod/pytorch:2.3.1-py3.11-cuda12.1.1-devel-ubuntu22.04
 
 # 環境変数の設定
 ENV PYTHONUNBUFFERED=1 \
@@ -6,9 +6,10 @@ ENV PYTHONUNBUFFERED=1 \
 
 # 必要なシステムパッケージをインストール
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends git ffmpeg && \
+    apt-get install -y --no-install-recommends python3.11 python3-pip git ffmpeg && \
     apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+    rm -rf /var/lib/apt/lists/* && \
+    ln -s /usr/bin/python3 /usr/bin/python
 
 # ビルド時に渡された認証トークンを受け取る
 ARG HUGGING_FACE_TOKEN
@@ -17,11 +18,7 @@ ENV HUGGING_FACE_TOKEN=${HUGGING_FACE_TOKEN}
 # アプリケーションコードと依存関係をコピー
 WORKDIR /app
 COPY requirements.txt .
-
-# ★★★ ここを修正 ★★★
-# requirements.txtからライブラリをインストール
 RUN pip install -r requirements.txt
-
 COPY runpod_handler.py .
 
 # コンテナ起動時にモデルをダウンロード・キャッシュ
