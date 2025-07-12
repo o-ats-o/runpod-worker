@@ -8,8 +8,7 @@ ENV PYTHONUNBUFFERED=1 \
 RUN apt-get update && \
     apt-get install -y --no-install-recommends python3.11 python3-pip git ffmpeg && \
     apt-get clean && \
-    rm -rf /var/lib/apt/lists/* && \
-    ln -s /usr/bin/python3 /usr/bin/python
+    rm -rf /var/lib/apt/lists/*
 
 # ビルド時に渡された認証トークンを受け取る
 ARG HUGGING_FACE_TOKEN
