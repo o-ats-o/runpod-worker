@@ -16,7 +16,7 @@ COMPUTE_TYPE = "float16" if torch.cuda.is_available() else "int8"
 print(f"INFO: Handler loading models to {DEVICE} with compute type {COMPUTE_TYPE}...")
 
 # 1. 文字起こしモデル (faster-whisper)
-model = WhisperModel("base", device=DEVICE, compute_type=COMPUTE_TYPE)
+model = WhisperModel("large-v3", device=DEVICE, compute_type=COMPUTE_TYPE)
 
 # 2. 話者分離モデル (pyannote.audio)
 diarization_pipeline = Pipeline.from_pretrained(
