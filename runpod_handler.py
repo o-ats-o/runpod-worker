@@ -6,6 +6,7 @@ from typing import List, Dict, Any
 from faster_whisper import WhisperModel
 from pyannote.audio import Pipeline
 import tempfile
+import traceback
 
 # --- グローバル設定とモデルのロード ---
 # この部分はコンテナ起動時に一度だけ実行される
@@ -88,7 +89,11 @@ def handler(job):
         return final_results
 
     except Exception as e:
-        return {"error": str(e)}
+        # エラーが発生した場合、詳細なスタックトレースをログに出力する
+        error_trace = traceback.format_exc()
+        print(f"ERROR: An exception occurred: {e}")
+        print(f"TRACEBACK: {error_trace}")
+        return {"error": str(e), "traceback": error_trace} # <- レスポンスにもトレースバックを含める
     finally:
         os.unlink(tmp_audio_path)
 
