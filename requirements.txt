@@ -4,3 +4,5 @@ speechbrain==1.0.0
 onnxruntime-gpu==1.18.0
 faster-whisper[gpu]
 python-multipart
+pyyaml
+huggingface_hub

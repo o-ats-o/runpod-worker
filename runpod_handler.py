@@ -1,83 +1,102 @@
 import os
 import torch
-import torchaudio
 import runpod
-from typing import List, Dict, Any
 from faster_whisper import WhisperModel
 from pyannote.audio import Pipeline
 import tempfile
+import base64
+import torchaudio
 
 # --- グローバル設定とモデルのロード ---
-# この部分はコンテナ起動時に一度だけ実行される
+# このセクションはワーカー起動時に一度だけ実行
+
 HF_AUTH_TOKEN = os.getenv("HUGGING_FACE_TOKEN")
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 COMPUTE_TYPE = "float16" if torch.cuda.is_available() else "int8"
 
-print(f"INFO: Handler loading models to {DEVICE} with compute type {COMPUTE_TYPE}...")
+# 永続ボリューム上のキャッシュディレクトリを定義
+CACHE_DIR = "/workspace/models_cache"
 
-# 1. 文字起こしモデル (faster-whisper)
-model = WhisperModel("large-v3", device=DEVICE, compute_type=COMPUTE_TYPE)
+print(f"INFO: キャッシュからモデルを読み込みます: {CACHE_DIR}...")
+print(f"INFO: デバイス: {DEVICE}, 計算タイプ: {COMPUTE_TYPE} を使用します。")
 
-# 2. 話者分離モデル (pyannote.audio)
+# 1. キャッシュから文字起こしモデルをロード
+# 'download_root'パラメータで、モデルを探す/保存する場所をfaster-whisperに伝える
+model = WhisperModel(
+    "large-v2",
+    device=DEVICE,
+    compute_type=COMPUTE_TYPE,
+    download_root=CACHE_DIR
+)
+
+# 2. キャッシュから話者分離モデルをロード
+# 'cache_dir'パラメータで、モデルを探す/保存する場所をpyannote/huggingfaceに伝える
 diarization_pipeline = Pipeline.from_pretrained(
     "pyannote/speaker-diarization-3.1",
     use_auth_token=HF_AUTH_TOKEN,
+    cache_dir=CACHE_DIR
 )
 diarization_pipeline.to(torch.device(DEVICE))
 
-print("INFO: Models loaded successfully.")
+print("INFO: 全てのモデルがキャッシュから正常に読み込まれました。")
 
-# --- ヘルパー関数 (変更なし) ---
+# --- ヘルパー関数 ---
+
 def format_timestamp(seconds: float) -> str:
-    assert seconds >= 0, "Negative timestamp not supported"
+    """秒を標準的なSRTタイムスタンプ形式に変換します。"""
+    assert seconds >= 0, "負のタイムスタンプはサポートされていません"
     milliseconds = round(seconds * 1000.0)
     hours, milliseconds = divmod(milliseconds, 3_600_000)
     minutes, milliseconds = divmod(milliseconds, 60_000)
     seconds_val, milliseconds = divmod(milliseconds, 1_000)
     return f"{hours:02d}:{minutes:02d}:{seconds_val:02d},{milliseconds:03d}"
 
-def assign_speaker_to_segment(segment: dict, diarization_result: "pyannote.core.Annotation") -> str:
-    max_overlap, best_speaker = 0, "UNKNOWN"
+def assign_speaker_to_segment(segment, diarization_result):
+    """最大の重複に基づき、文字起こしセグメントに話者ラベルを割り当てます。"""
+    from pyannote.core import Segment
+    max_overlap = 0
+    best_speaker = "UNKNOWN"
     for turn, _, speaker in diarization_result.itertracks(yield_label=True):
-        overlap = max(0, min(segment["end"], turn.end) - max(segment["start"], turn.start))
+        # whisperセグメントと話者の発話区間の重複を計算
+        overlap = max(0, min(segment.end, turn.end) - max(segment.start, turn.start))
         if overlap > max_overlap:
-            max_overlap, best_speaker = overlap, speaker
+            max_overlap = overlap
+            best_speaker = speaker
     return best_speaker
 
-# --- RunPodハンドラ関数 ---
+# --- RunPodハンドラ ---
+
 def handler(job):
-    """
-    RunPodがリクエストを受け取ったときに呼び出すメイン関数
-    """
+    """各ジョブに対してRunPodから呼び出されるメイン関数です。"""
     job_input = job['input']
-    
-    # Base64エンコードされた音声データとファイル名を取得
     audio_base64 = job_input.get("audio_base64")
-    file_name = job_input.get("file_name", "audio.tmp")
-    language = job_input.get("language", "ja")
-    
+    language = job_input.get("language", "ja") # 指定がない場合は日本語をデフォルトとします
+
     if not audio_base64:
-        return {"error": "audio_base64 not provided"}
-        
-    import base64
+        return {"error": "入力が見つからないか、'audio_base64'が提供されていません。"}
+
     audio_data = base64.b64decode(audio_base64)
-    
-    # 一時ファイルに音声データを書き込む
-    with tempfile.NamedTemporaryFile(delete=False, suffix=f"_{file_name}") as tmp_file:
+
+    # デコードした音声を一時ファイルに保存
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_file:
         tmp_file.write(audio_data)
         tmp_audio_path = tmp_file.name
 
     try:
-        # 文字起こし処理
+        # 1. 話者分離を実行
+        print("INFO: 話者分離を実行中...")
         waveform, sample_rate = torchaudio.load(tmp_audio_path)
         diarization_result = diarization_pipeline({"waveform": waveform, "sample_rate": sample_rate})
-        lang_option = language if language != "auto" else None
-        segments, _ = model.transcribe(tmp_audio_path, language=lang_option, beam_size=5, vad_filter=True)
+
+        # 2. 文字起こしを実行
+        print("INFO: 文字起こしを実行中...")
+        segments, _ = model.transcribe(tmp_audio_path, language=language, beam_size=5, vad_filter=True)
         
-        # 結果の整形
+        # 3. 結果を結合
+        print("INFO: 結果を結合中...")
         final_results = []
         for segment in segments:
-            speaker = assign_speaker_to_segment({"start": segment.start, "end": segment.end}, diarization_result)
+            speaker = assign_speaker_to_segment(segment, diarization_result)
             final_results.append({
                 "speaker": speaker,
                 "start_time": format_timestamp(segment.start),
@@ -85,12 +104,15 @@ def handler(job):
                 "text": segment.text.strip(),
             })
         
+        print("INFO: ジョブが正常に完了しました。")
         return final_results
 
     except Exception as e:
+        print(f"ERROR: エラーが発生しました: {e}")
         return {"error": str(e)}
     finally:
+        # 一時ファイルをクリーンアップ
         os.unlink(tmp_audio_path)
 
-# RunPodワーカーを開始
+# RunPodサーバーレスワーカーを開始
 runpod.serverless.start({"handler": handler})
