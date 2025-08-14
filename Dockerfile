@@ -16,7 +16,7 @@ RUN apt-get update && \
 WORKDIR /app
 
 # 1. Python依存関係のインストール (変更頻度が低いため先に行い、キャッシュを活用)
-COPY requirements.txt.
+COPY requirements.txt .
 RUN pip install --upgrade pip && pip install -r requirements.txt
 
 # 2. モデル準備スクリプトをコピー
