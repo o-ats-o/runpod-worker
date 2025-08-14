@@ -16,13 +16,15 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        
-      - name: Free up disk space
-        uses: jlumbroso/free-disk-space-action@main
+
+      - name: Maximize build space
+        uses: easimon/maximize-build-space-action@v10
         with:
-          tool-cache: false
-          android: true
-          haskell: true
+          root-reserve-mb: 512
+          swap-size-mb: 1024
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
