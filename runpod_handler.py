@@ -9,38 +9,34 @@ import torchaudio
 
 # --- グローバル設定とモデルのロード ---
 # このセクションはワーカー起動時に一度だけ実行
+# モデルはDockerイメージ内にプリキャッシュされているため、ローカルパスを指定
 
-HF_AUTH_TOKEN = os.getenv("HUGGING_FACE_TOKEN")
+# Dockerfileで焼き付けたモデルへのコンテナ内パスを定義
+FASTER_WHISPER_PATH = "/app/models/faster-whisper-large-v2"
+PYANNOTE_CONFIG_PATH = "/app/models/pyannote-diarization-3.1/local_config.yaml"
+
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 COMPUTE_TYPE = "float16" if torch.cuda.is_available() else "int8"
 
-# 永続ボリューム上のキャッシュディレクトリを定義
-CACHE_DIR = "/workspace/models_cache"
-
-print(f"INFO: キャッシュからモデルを読み込みます: {CACHE_DIR}...")
+print(f"INFO: ローカルパスからモデルを読み込みます...")
 print(f"INFO: デバイス: {DEVICE}, 計算タイプ: {COMPUTE_TYPE} を使用します。")
 
-# 1. キャッシュから文字起こしモデルをロード
-# 'download_root'パラメータで、モデルを探す/保存する場所をfaster-whisperに伝える
+# 1. ローカルパスから文字起こしモデルをロード
 model = WhisperModel(
-    "large-v2",
+    FASTER_WHISPER_PATH,
     device=DEVICE,
-    compute_type=COMPUTE_TYPE,
-    download_root=CACHE_DIR
+    compute_type=COMPUTE_TYPE
 )
 
-# 2. キャッシュから話者分離モデルをロード
-# 'cache_dir'パラメータで、モデルを探す/保存する場所をpyannote/huggingfaceに伝える
-diarization_pipeline = Pipeline.from_pretrained(
-    "pyannote/speaker-diarization-3.1",
-    use_auth_token=HF_AUTH_TOKEN,
-    cache_dir=CACHE_DIR
-)
+# 2. 変更済みのローカル設定ファイルから話者分離モデルをロード
+# ランタイムでは認証トークンは不要
+diarization_pipeline = Pipeline.from_pretrained(PYANNOTE_CONFIG_PATH)
 diarization_pipeline.to(torch.device(DEVICE))
 
-print("INFO: 全てのモデルがキャッシュから正常に読み込まれました。")
+print("INFO: 全てのモデルがローカルパスから正常に読み込まれました。")
 
-# --- ヘルパー関数 ---
+
+# --- ヘルパー関数 (変更なし) ---
 
 def format_timestamp(seconds: float) -> str:
     """秒を標準的なSRTタイムスタンプ形式に変換します。"""
