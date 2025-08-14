@@ -30,16 +30,13 @@ jobs:
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
         with:
-          context:./runpod-worker
-
-          file:./runpod-worker/Dockerfile
+          context: ./runpod-worker
+          file: ./runpod-worker/Dockerfile
           push: true
           tags: |
             ghcr.io/${{ github.repository }}:latest
             ghcr.io/${{ github.repository }}:${{ github.sha }}
-
           secrets: |
-            "hf_token=${{ secrets.HUGGING_FACE_TOKEN }}"
-
+            hf_token=${{ secrets.HUGGING_FACE_TOKEN }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
