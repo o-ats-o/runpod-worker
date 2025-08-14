@@ -16,8 +16,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-        - name: Free up disk space
+        
+      - name: Free up disk space
         uses: jlumbroso/free-disk-space-action@main
         with:
           tool-cache: false
