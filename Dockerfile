@@ -27,7 +27,7 @@ COPY prepare_models.py.
 RUN --mount=type=secret,id=hf_token python prepare_models.py
 
 # 4. アプリケーションコードをコピー
-COPY runpod_handler.py.
+COPY runpod_handler.py .
 
 # コンテナ起動時に実行するコマンドを定義
 CMD ["python", "-u", "runpod_handler.py"]
