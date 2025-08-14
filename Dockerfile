@@ -20,7 +20,7 @@ COPY requirements.txt .
 RUN pip install --upgrade pip && pip install -r requirements.txt
 
 # 2. モデル準備スクリプトをコピー
-COPY prepare_models.py.
+COPY prepare_models.py .
 
 # 3. モデルのダウンロードと設定
 # GitHub Actionsからビルド時シークレットをマウントして実行
