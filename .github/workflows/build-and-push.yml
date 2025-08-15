@@ -17,6 +17,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Clean up Docker
+        run: docker system prune -af
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
