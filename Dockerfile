@@ -1,33 +1,30 @@
-# PyTorchとCUDAがプリインストールされたRunPod公式イメージを使用
 FROM runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
 
-# 環境変数を設定
 ENV PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=off \
-    HF_HOME=/app/models/hf_cache
+    PIP_NO_CACHE_DIR=off
 
-# ffmpegのようなシステムレベルの依存関係をインストール
 RUN apt-get update && \
     apt-get install -y --no-install-recommends ffmpeg git && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# コンテナ内の作業ディレクトリを設定
 WORKDIR /app
 
-# 1. Python依存関係のインストール (変更頻度が低いため先に行い、キャッシュを活用)
+# Python依存関係のインストール
 COPY requirements.txt .
 RUN pip install --upgrade pip && pip install -r requirements.txt
 
-# 2. モデル準備スクリプトをコピー
-COPY prepare_models.py .
+# シェルスクリプトをコピーし、実行権限を付与
+COPY prepare_models.sh .
+RUN chmod +x ./prepare_models.sh
 
-# 3. モデルのダウンロードと設定
-# GitHub Actionsからビルド時シークレットをマウントして実行
-RUN --mount=type=secret,id=hf_token python prepare_models.py
+# モデル準備スクリプトを実行
+# hf-transferライブラリが高速ダウンロードのためにこの環境変数を参照します
+ENV HF_HUB_ENABLE_HF_TRANSFER=1
+RUN --mount=type=secret,id=hf_token ./prepare_models.sh
 
-# 4. アプリケーションコードをコピー
+# 最後にハンドラコードをコピー
 COPY runpod_handler.py .
 
-# コンテナ起動時に実行するコマンドを定義
+# コンテナ起動時のコマンド
 CMD ["python", "-u", "runpod_handler.py"]
