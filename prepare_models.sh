@@ -9,7 +9,8 @@ pip install -U faster-whisper pyannote.audio torch huggingface_hub hf-transfer &
 echo "ステップ2：シークレットからHugging Faceトークンを設定中..."
 # ビルドシークレットからトークンを読み込む
 HF_TOKEN=$(cat /run/secrets/hf_token)
-export HUGGING_FACE_TOKEN=$HF_TOKEN
+export HF_TOKEN
+export HUGGINGFACE_HUB_TOKEN="$HF_TOKEN"
 
 if [ -z "$HF_TOKEN" ]; then
     echo "エラー：Hugging Faceトークンをシークレットから読み込めませんでした。"
@@ -17,15 +18,16 @@ if [ -z "$HF_TOKEN" ]; then
 fi
 
 echo "ステップ3-A：Whisperモデルをダウンロード中..."
-huggingface-cli download Systran/faster-whisper-large-v2 \
+hf download Systran/faster-whisper-large-v2 \
 --cache-dir /app/models \
 --local-dir /app/models/Systran/faster-whisper-large-v2 \
---local-dir-use-symlinks False
+--local-dir-use-symlinks False \
+--token "$HF_TOKEN"
 
 echo "ステップ3-B：話者分離モデルをダウンロード中..."
-huggingface-cli download pyannote/speaker-diarization-3.1 --local-dir /app/models/pyannote/speaker-diarization-3.1 --cache-dir /app/models
-huggingface-cli download pyannote/segmentation-3.0 --local-dir /app/models/pyannote/segmentation-3.0 --cache-dir /app/models
-huggingface-cli download speechbrain/spkrec-ecapa-voxceleb --local-dir /app/models/speechbrain/spkrec-ecapa-voxceleb --cache-dir /app/models
+hf download pyannote/speaker-diarization-3.1 --local-dir /app/models/pyannote/speaker-diarization-3.1 --cache-dir /app/models --token "$HF_TOKEN"
+hf download pyannote/segmentation-3.0 --local-dir /app/models/pyannote/segmentation-3.0 --cache-dir /app/models --token "$HF_TOKEN"
+hf download speechbrain/spkrec-ecapa-voxceleb --local-dir /app/models/speechbrain/spkrec-ecapa-voxceleb --cache-dir /app/models --token "$HF_TOKEN"
 
 echo "ステップ4：Pyanonteの設定ファイル（config.yaml）をローカルパスに書き換え中..."
 CONFIG_PATH="/app/models/pyannote/speaker-diarization-3.1/config.yaml"
