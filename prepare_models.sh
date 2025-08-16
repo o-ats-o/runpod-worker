@@ -18,20 +18,31 @@ if [ -z "$HF_TOKEN" ]; then
 fi
 
 echo "ステップ3-A：Whisperモデルをダウンロード中..."
-hf download Systran/faster-whisper-large-v2 \
+huggingface-cli download Systran/faster-whisper-large-v2 \
 --cache-dir /app/models \
 --local-dir /app/models/Systran/faster-whisper-large-v2 \
---local-dir-use-symlinks False \
---token "$HF_TOKEN"
+--local-dir-use-symlinks False
 
 echo "ステップ3-B：話者分離モデルをダウンロード中..."
-hf download pyannote/speaker-diarization-3.1 --local-dir /app/models/pyannote/speaker-diarization-3.1 --cache-dir /app/models --token "$HF_TOKEN"
-hf download pyannote/segmentation-3.0 --local-dir /app/models/pyannote/segmentation-3.0 --cache-dir /app/models --token "$HF_TOKEN"
-hf download speechbrain/spkrec-ecapa-voxceleb --local-dir /app/models/speechbrain/spkrec-ecapa-voxceleb --cache-dir /app/models --token "$HF_TOKEN"
+python3 -c "
+from pyannote.audio import Pipeline
+print('-> 話者分離モデルのダウンロードを開始します...')
+token = os.getenv('HUGGING_FACE_TOKEN')
+Pipeline.from_pretrained(
+    'pyannote/speaker-diarization-3.1',
+    use_auth_token=token,
+    cache_dir='/app/models'
+)
+"
 
 echo "ステップ4：Pyanonteの設定ファイル（config.yaml）をローカルパスに書き換え中..."
-CONFIG_PATH="/app/models/pyannote/speaker-diarization-3.1/config.yaml"
-sed -i 's|pyannote/segmentation-3.0|/app/models/pyannote/segmentation-3.0|g' $CONFIG_PATH
-sed -i 's|speechbrain/spkrec-ecapa-voxceleb|/app/models/speechbrain/spkrec-ecapa-voxceleb|g' $CONFIG_PATH
+CONFIG_PATH=$(find /app/models -name "config.yaml" | grep "pyannote/speaker-diarization-3.1")
+echo "発見したconfig.yamlのパス: $CONFIG_PATH"
+SPEECHBRAIN_PATH=$(find /app/models -type d -name "*speechbrain*spkrec-ecapa-voxceleb*")
+echo "発見したspeechbrainモデルのパス: $SPEECHBRAIN_PATH"
+SEGMENTATION_PATH=$(find /app/models -type d -name "*pyannote*segmentation*")
+echo "発見したsegmentationモデルのパス: $SEGMENTATION_PATH"
+sed -i \"s|pyannote/segmentation-3.0|$SEGMENTATION_PATH|g\" $CONFIG_PATH
+sed -i \"s|speechbrain/spkrec-ecapa-voxceleb|$SPEECHBRAIN_PATH|g\" $CONFIG_PATH
 
 echo "\成功！全てのモデルがイメージ内にダウンロードされました！"
