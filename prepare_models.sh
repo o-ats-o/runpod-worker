@@ -23,14 +23,13 @@ huggingface-cli download Systran/faster-whisper-large-v2 \
 --local-dir-use-symlinks False
 
 echo "ステップ3-B：話者分離モデルをダウンロード中..."
-python3 -c "
-from pyannote.audio import Pipeline
-print('-> 話者分離モデルのダウンロードを開始します...')
-Pipeline.from_pretrained(
-    'pyannote/speaker-diarization-3.1',
-    use_auth_token='$HF_TOKEN',
-    cache_dir='/app/models'
-)
-"
+huggingface-cli download pyannote/speaker-diarization-3.1 --local-dir /app/models/pyannote/speaker-diarization-3.1 --cache-dir /app/models
+huggingface-cli download pyannote/segmentation-3.0 --local-dir /app/models/pyannote/segmentation-3.0 --cache-dir /app/models
+huggingface-cli download speechbrain/spkrec-ecapa-voxceleb --local-dir /app/models/speechbrain/spkrec-ecapa-voxceleb --cache-dir /app/models
+
+echo "ステップ4：Pyanonteの設定ファイル（config.yaml）をローカルパスに書き換え中..."
+CONFIG_PATH="/app/models/pyannote/speaker-diarization-3.1/config.yaml"
+sed -i 's|pyannote/segmentation-3.0|/app/models/pyannote/segmentation-3.0|g' $CONFIG_PATH
+sed -i 's|speechbrain/spkrec-ecapa-voxceleb|/app/models/speechbrain/spkrec-ecapa-voxceleb|g' $CONFIG_PATH
 
 echo "\成功！全てのモデルがイメージ内にダウンロードされました！"
