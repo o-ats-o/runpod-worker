@@ -12,7 +12,7 @@ import torchaudio
 # モデルはDockerイメージ内にプリキャッシュされているため、ローカルパスを指定
 
 # Dockerfileで焼き付けたモデルへのコンテナ内パスを定義
-FASTER_WHISPER_PATH = "/app/models/faster-whisper-large-v2"
+FASTER_WHISPER_PATH = "/app/models/Systran/faster-whisper-large-v2"
 PYANNOTE_CONFIG_PATH = "/app/models/pyannote-diarization-3.1/local_config.yaml"
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
