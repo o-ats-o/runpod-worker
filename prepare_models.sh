@@ -1,58 +1,95 @@
 #!/bin/bash
-# エラーが発生したらスクリプトを停止する
-set -e
+# エラーが発生した場合や未定義の変数があった場合に即座にスクリプトを停止する
+set -euo pipefail
 
 echo "ステップ1：必要なライブラリをインストール中..."
-# ビルド時に必要なライブラリをここで再確認
-pip install -U faster-whisper pyannote.audio torch huggingface_hub hf-transfer &> /dev/null && echo "ライブラリのインストールが完了しました。" || echo "ライブラリのインストールに失敗しました。"
+pip install -q -U faster-whisper pyannote.audio==3.1.1 torch huggingface_hub hf-transfer
+echo "ライブラリのインストールが完了しました。"
 
 echo "ステップ2：シークレットからHugging Faceトークンを設定中..."
-# ビルドシークレットからトークンを読み込む
 HF_TOKEN=$(cat /run/secrets/hf_token)
 export HUGGING_FACE_TOKEN=$HF_TOKEN
 
 if [ -z "$HF_TOKEN" ]; then
-    echo "エラー：Hugging Faceトークンをシークレットから読み込めませんでした。"
+    echo "致命的エラー：Hugging Faceトークンをシークレットから読み込めませんでした。"
     exit 1
 fi
+echo "Hugging Faceトークンが設定されました。"
+
+MODELS_DIR="/app/models"
 
 echo "ステップ3-A：Whisperモデルをダウンロード中..."
-huggingface-cli download Systran/faster-whisper-large-v2 \
---cache-dir /app/models \
---local-dir /app/models/Systran/faster-whisper-large-v2 \
---local-dir-use-symlinks False
+hf download Systran/faster-whisper-large-v2 \
+  --cache-dir $MODELS_DIR \
+  --local-dir $MODELS_DIR/Systran/faster-whisper-large-v2 \
+  --local-dir-use-symlinks False
+echo "Whisperモデルのダウンロードが完了しました。"
 
-echo "ステップ3-B：話者分離モデルをダウンロード中..."
+
+echo "ステップ3-B：話者分離モデルと依存モデルをダウンロード中..."
 python3 -c "
-from pyannote.audio import Pipeline
-print('-> 話者分離モデルのダウンロードを開始します...')
-Pipeline.from_pretrained(
+from huggingface_hub import snapshot_download
+import os
+
+hf_token = os.environ.get('HUGGING_FACE_TOKEN')
+models_dir = '$MODELS_DIR'
+
+# 1. Pyannote本体 (speaker-diarization-3.1) のダウンロード
+print('-> 話者分離パイプライン (diarization-3.1) をダウンロードします...')
+snapshot_download(
     'pyannote/speaker-diarization-3.1',
-    use_auth_token='$HF_TOKEN',
-    cache_dir='/app/models'
+    local_dir=f'{models_dir}/pyannote-diarization-3.1',
+    local_dir_use_symlinks=False,
+    token=hf_token,
+    allow_patterns=['*.yaml', '*.bin', '*.onnx', '*.model'] # 必要なファイルのみダウンロード
+)
+
+# 2. 依存モデル① (セグメンテーション) のダウンロード
+print('-> セグメンテーションモデル (segmentation-3.0) をダウンロードします...')
+snapshot_download(
+    'pyannote/segmentation-3.0',
+    local_dir=f'{models_dir}/pyannote-segmentation-3.0',
+    local_dir_use_symlinks=False,
+    token=hf_token,
+    allow_patterns=['*.yaml', '*.bin', '*.onnx', '*.model']
+)
+
+# 3. 依存モデル② (埋め込み) のダウンロード
+# speaker-diarization-3.1のconfig.yamlで指定されている埋め込みモデル
+print('-> 埋め込みモデル (wespeaker-voxceleb-resnet34-LM) をダウンロードします...')
+snapshot_download(
+    'pyannote/wespeaker-voxceleb-resnet34-LM',
+    local_dir=f'{models_dir}/pyannote-embedding-wespeaker',
+    local_dir_use_symlinks=False,
+    token=hf_token,
+    allow_patterns=['*.yaml', '*.bin', '*.onnx', '*.model']
 )
 "
+echo "話者分離関連モデルのダウンロードが完了しました。"
+
 
 echo "ステップ4：Pyanonteの設定ファイル（config.yaml）をローカルパスに書き換え中..."
-CONFIG_PATH=$(find /app/models -type f -name "config.yaml" | grep "pyannote--speaker-diarization" || true)
-SPEECHBRAIN_PATH=$(find /app/models -type d -name "*speechbrain*spkrec-ecapa-voxceleb*" || true)
-SEGMENTATION_PATH=$(find /app/models -type d -name "*pyannote*segmentation*" || true)
 
-# パスが見つかったかどうかのチェックを追加し、デバッグしやすくする
-if [ -z "$CONFIG_PATH" ]; then
-    echo "致命的エラー: config.yaml が見つかりませんでした。ビルドを中止します。"
-    echo "--- /app/models ディレクトリの構造 ---"
-    ls -R /app/models # デバッグ用にディレクトリ構造を全て出力
+CONFIG_PATH="$MODELS_DIR/pyannote-diarization-3.1/config.yaml"
+SEGMENTATION_PATH="$MODELS_DIR/pyannote-segmentation-3.0"
+EMBEDDING_PATH="$MODELS_DIR/pyannote-embedding-wespeaker"
+
+if [ ! -f "$CONFIG_PATH" ]; then
+    echo "致命的エラー: config.yaml が見つかりませんでした: ${CONFIG_PATH}"
+    echo "--- ${MODELS_DIR} ディレクトリの構造 ---"
+    ls -R "${MODELS_DIR}"
     exit 1
 fi
 
 echo "発見したパス:"
-echo "  - Config: $CONFIG_PATH"
-echo "  - Segmentation: $SEGMENTATION_PATH"
-echo "  - Speechbrain: $SPEECHBRAIN_PATH"
+echo "  - Config: ${CONFIG_PATH}"
+echo "  - Segmentation: ${SEGMENTATION_PATH}"
+echo "  - Embedding: ${EMBEDDING_PATH}"
 
-# sedコマンドで、config.yaml内のモデルパスを、findで見つけた絶対パスに書き換える
-sed -i "s#pyannote/segmentation-3.0#$SEGMENTATION_PATH#g" "$CONFIG_PATH"
-sed -i "s#speechbrain/spkrec-ecapa-voxceleb#$SPEECHBRAIN_PATH#g" "$CONFIG_PATH"
+echo "-> config.yamlを更新しています..."
+sed -i "s#pyannote/segmentation-3.0#${SEGMENTATION_PATH}#g" "${CONFIG_PATH}"
+sed -i "s#pyannote/wespeaker-voxceleb-resnet34-LM#${EMBEDDING_PATH}#g" "${CONFIG_PATH}"
+echo "config.yamlの更新が完了しました。"
 
-echo "\成功！全てのモデルがイメージ内にダウンロードされました！"
+echo ""
+echo "✅ 成功！全てのモデルがイメージ内にダウンロードされ、設定が更新されました！"
