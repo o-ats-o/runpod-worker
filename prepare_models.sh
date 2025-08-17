@@ -34,10 +34,7 @@ Pipeline.from_pretrained(
 "
 
 echo "ステップ4：Pyanonteの設定ファイル（config.yaml）をローカルパスに書き換え中..."
-
-# findコマンドで関連ファイルの絶対パスを確実に取得する
-# grepが何も見つけなくてもスクリプトが停止しないように `|| true` を追加
-CONFIG_PATH=$(find /app/models -type f -name "config.yaml" | grep "pyannote/speaker-diarization" || true)
+CONFIG_PATH=$(find /app/models -type f -name "config.yaml" | grep "pyannote--speaker-diarization" || true)
 SPEECHBRAIN_PATH=$(find /app/models -type d -name "*speechbrain*spkrec-ecapa-voxceleb*" || true)
 SEGMENTATION_PATH=$(find /app/models -type d -name "*pyannote*segmentation*" || true)
 
@@ -55,7 +52,6 @@ echo "  - Segmentation: $SEGMENTATION_PATH"
 echo "  - Speechbrain: $SPEECHBRAIN_PATH"
 
 # sedコマンドで、config.yaml内のモデルパスを、findで見つけた絶対パスに書き換える
-# 区切り文字を'/'から'#'に変更し、パス内の'/'がエラーを引き起こさないようにする
 sed -i "s#pyannote/segmentation-3.0#$SEGMENTATION_PATH#g" "$CONFIG_PATH"
 sed -i "s#speechbrain/spkrec-ecapa-voxceleb#$SPEECHBRAIN_PATH#g" "$CONFIG_PATH"
 
