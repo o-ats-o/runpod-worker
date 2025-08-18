@@ -34,7 +34,7 @@ def download_models(token):
         snapshot_download(
             repo_id=repo_id,
             local_dir=str(target_path),
-            local_dir_use_symlinks=False, # シンボリックリンクは使わない
+            local_dir_use_symlinks=False,
             token=token,
             resume_download=True,
         )
