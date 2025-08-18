@@ -12,7 +12,7 @@ WORKDIR /app
 
 # Python依存関係のインストール
 COPY requirements.txt .
-RUN pip install --upgrade pip && pip install --no-cache-dir --no-upgrade -r requirements.txt
+RUN pip install --upgrade pip && pip install -r requirements.txt
 
 # シェルスクリプトをコピーし、実行権限を付与
 COPY prepare_models.sh .
