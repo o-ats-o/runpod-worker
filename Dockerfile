@@ -18,6 +18,9 @@ RUN pip install --upgrade pip && pip install -r requirements.txt
 COPY prepare_models.sh .
 RUN chmod +x ./prepare_models.sh
 
+# Hugging Faceライブラリにキャッシュの場所を教える
+ENV HUGGING_FACE_HUB_CACHE=/app/models
+
 # モデル準備スクリプトを実行
 # hf-transferライブラリが高速ダウンロードのためにこの環境変数を参照します
 ENV HF_HUB_ENABLE_HF_TRANSFER=1
