@@ -1,7 +1,15 @@
 runpod
+
+# 話者分離スタック
 pyannote.audio==3.3.2
 speechbrain==1.0.0
-faster-whisper[gpu]
+onnxruntime-gpu==1.18.1
+
+# 文字起こしスタック
+faster-whisper==1.0.3
+ctranslate2==4.6.0
+
+# Web/APIおよびユーティリティ
 python-multipart
 pyyaml
 huggingface_hub
