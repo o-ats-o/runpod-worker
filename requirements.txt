@@ -1,7 +1,6 @@
 runpod
 pyannote.audio==3.3.2
 speechbrain==1.0.0
-onnxruntime-gpu==1.18.1
 faster-whisper[gpu]
 python-multipart
 pyyaml
