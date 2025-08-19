@@ -3,7 +3,7 @@ FROM runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=off
 
-RUN apt-get update && \
+    RUN apt-get update && \
     apt-get install -y --no-install-recommends ffmpeg git && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
@@ -12,7 +12,11 @@ WORKDIR /app
 
 # Python依存関係のインストール
 COPY requirements.txt .
-RUN pip install --upgrade pip && pip install -r requirements.txt
+RUN pip install --upgrade pip && \
+    pip install torch==2.4.1 torchvision==0.19.1 torchaudio==2.4.1 --index-url https://download.pytorch.org/whl/cu121 && \
+    pip install -r requirements.txt
+
+ENV LD_LIBRARY_PATH=/usr/local/lib/python3.11/site-packages/nvidia/cudnn/lib:$LD_LIBRARY_PATH
 
 # シェルスクリプトをコピーし、実行権限を付与
 COPY prepare_models.sh .

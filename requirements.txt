@@ -1,13 +1,15 @@
-runpod
+faster-whisper==1.0.3
+ctranslate2==4.5.0
 
-# 話者分離スタック
 pyannote.audio==3.3.2
 speechbrain==1.0.3
+pytorch-lightning==2.3.1
 
-# 文字起こしスタック
-faster-whisper==1.2.0
+nvidia-cublas-cu12==12.5.3.2
+nvidia-cudnn-cu12==9.4.0.58
 
-# Web/APIおよびユーティリティ
+numpy<2.0
 python-multipart
 pyyaml
 huggingface_hub
+hf-transfer

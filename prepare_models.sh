@@ -2,12 +2,7 @@
 # エラー発生時に即座にスクリプトを停止し、未定義変数の使用をエラーとする堅牢な設定
 set -euo pipefail
 
-echo "ステップ1：必要なライブラリをインストール中..."
-# PyYAMLも必要なので追加
-pip install -U faster-whisper pyannote.audio torch huggingface_hub hf-transfer pyyaml &> /dev/null
-echo "ライブラリのインストールが完了しました。"
-
-echo "ステップ2：シークレットからHugging Faceトークンを設定中..."
+echo "ステップ1：シークレットからHugging Faceトークンを設定中..."
 # ビルドシークレットからトークンを読み込む
 HF_TOKEN_FILE="/run/secrets/hf_token"
 if [ ! -f "$HF_TOKEN_FILE" ]; then
@@ -24,12 +19,12 @@ export HUGGING_FACE_HUB_TOKEN=$HF_TOKEN
 echo "Hugging Faceトークンが設定されました。"
 
 
-echo "ステップ3-A：Whisperモデルをダウンロード中..."
+echo "ステップ2-A：Whisperモデルをダウンロード中..."
 hf download Systran/faster-whisper-large-v2 \
 --cache-dir /app/models \
 --local-dir /app/models/Systran/faster-whisper-large-v2
 
-echo "ステップ3-B & 4：話者分離モデルのダウンロードと設定ファイルの動的書き換え..."
+echo "ステップ2-B & 3：話者分離モデルのダウンロードと設定ファイルの動的書き換え..."
 python3 -c "
 import os
 import yaml
