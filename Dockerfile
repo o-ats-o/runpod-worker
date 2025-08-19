@@ -3,8 +3,14 @@ FROM runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=off
 
-    RUN apt-get update && \
-    apt-get install -y --no-install-recommends ffmpeg git && \
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    build-essential \
+    pkg-config \
+    libsox-dev \
+    libsndfile1-dev \
+    ffmpeg \
+    git && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
