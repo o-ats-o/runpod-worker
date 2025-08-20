@@ -1,16 +1,16 @@
-# torch / torchvision / torchaudio は Dockerfile 側で cu118 変種を固定
+torch
+torchvision
+torchaudio
+
 faster-whisper[gpu]==1.0.3
 pyannote.audio==3.1.1
 python-dotenv
-
 transformers
 accelerate
 punctuators==0.0.5
 git+https://github.com/huggingface/diarizers.git
-
 onnxruntime-gpu==1.17.1
-
-numpy<2.0
+numpy
 packaging<25.0
 tqdm
 runpod
