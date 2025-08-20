@@ -36,7 +36,7 @@ RUN --mount=type=secret,id=hf_token \
     HF_HUB_OFFLINE=0 python download_models.py && \
     test -L "$WHISPER_LOCAL_DIR" && \
     test -f "$PYANNOTE_CACHE_DIR/pipelines/speaker-diarization-3.1/config.yaml" && \
-    echo '[Bake] Model bake finished.'S
+    echo '[Bake] Model bake finished.'
 
 ENV HF_HUB_OFFLINE=1
 
