@@ -30,18 +30,20 @@ WORKDIR /app
 # 1. torch (CUDA 11.8 variant) を先に固定インストール (依存のブレを防ぐ)
 # --------------------------------------------------------------------------------
 RUN pip install --upgrade pip setuptools wheel && \
-    pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 && \
+    pip install --index-url https://download.pytorch.org/whl/cu118 \
+        torch==2.1.2 torchvision==0.16.2 torchaudio==2.1.2 && \
     python -c "import torch;print('Torch:', torch.__version__, 'CUDA:', torch.version.cuda, 'cuDNN:', torch.backends.cudnn.version())"
 
 # --------------------------------------------------------------------------------
 # 2. その他依存 (torch 以外)
 # --------------------------------------------------------------------------------
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt && \
-    python - <<'PY'
-import torch
-print('Post-install check -> Torch:', torch.__version__, 'CUDA:', torch.version.cuda, 'cuDNN:', torch.backends.cudnn.version())
-PY
+RUN --mount=type=secret,id=hf_token \
+    export HF_TOKEN="$(cat /run/secrets/hf_token)" && \
+    python download_models.py && \
+    test -f "$WHISPER_LOCAL_DIR/config.json" && \
+    test -f "$PYANNOTE_CACHE_DIR/pipelines/speaker-diarization-3.1/config.yaml" && \
+    echo 'Model bake finished.'
 
 # --------------------------------------------------------------------------------
 # 3. モデルダウンロード (HF トークンは BuildKit secret から; トークン自体はレイヤに残さない)
