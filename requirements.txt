@@ -1,13 +1,18 @@
-faster-whisper==1.0.3
-ctranslate2==4.5.0
+# torch / torchvision / torchaudio は Dockerfile 側で cu118 変種を固定
+faster-whisper[gpu]==1.0.3
+pyannote.audio==3.1.1
+python-dotenv
 
-pyannote.audio==3.3.2
-speechbrain==1.0.3
-pytorch-lightning==2.3.1
+transformers
+accelerate
+punctuators==0.0.5
+git+https://github.com/huggingface/diarizers.git
+
+onnxruntime-gpu==1.17.1
 
 numpy<2.0
-python-multipart
-pyyaml
-huggingface_hub
-hf-transfer
+packaging<25.0
+tqdm
 runpod
+huggingface_hub
+pyyaml
