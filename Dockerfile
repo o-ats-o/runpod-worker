@@ -34,12 +34,7 @@ RUN pip install --upgrade pip setuptools wheel && \
 # 2. その他依存 (torch 以外)
 # --------------------------------------------------------------------------------
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt && \
-        python - <<'PY'
-    import torch, numpy
-    print('Post-install -> Torch:', torch.__version__, 'CUDA:', torch.version.cuda, 'cuDNN:', torch.backends.cudnn.version())
-    print('NumPy version:', numpy.__version__)
-    PY
+RUN pip install --no-cache-dir -r requirements.txt
     
 
 # --------------------------------------------------------------------------------
@@ -54,7 +49,7 @@ RUN --mount=type=secret,id=hf_token \
     test -f "$WHISPER_LOCAL_DIR/config.json" && \
     test -f "$PYANNOTE_CACHE_DIR/pipelines/speaker-diarization-3.1/config.yaml" && \
     echo 'Model bake finished.'
-    
+
 # --------------------------------------------------------------------------------
 # 4. 推論ハンドラ
 # --------------------------------------------------------------------------------
