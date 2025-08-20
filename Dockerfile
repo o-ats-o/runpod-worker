@@ -19,9 +19,8 @@ WORKDIR /app
 # Python依存関係のインストール
 COPY requirements.txt .
 RUN pip install --upgrade pip setuptools wheel cython && \
-    pip install "soxr==0.3.7" "librosa==0.10.1" --only-binary=:all: && \
-    pip install torch==2.4.1 torchvision==0.19.1 torchaudio==2.4.1 --index-url https://download.pytorch.org/whl/cu121 && \
-    pip install -r requirements.txt
+    pip install --no-cache-dir -r requirements.txt \
+        --extra-index-url https://download.pytorch.org/whl/cu121
 
 ENV LD_LIBRARY_PATH=/usr/local/lib/python3.11/site-packages/nvidia/cudnn/lib:$LD_LIBRARY_PATH
 

@@ -9,9 +9,6 @@ pyannote.audio==3.3.2
 speechbrain==1.0.3
 pytorch-lightning==2.3.1
 
-nvidia-cublas-cu12==12.5.3.2
-nvidia-cudnn-cu12==9.4.0.58
-
 numpy<2.0
 python-multipart
 pyyaml
