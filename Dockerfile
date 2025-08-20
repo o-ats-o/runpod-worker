@@ -20,7 +20,8 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --upgrade pip setuptools wheel cython && \
     pip install --no-cache-dir -r requirements.txt \
-        --extra-index-url https://download.pytorch.org/whl/cu121
+        --extra-index-url https://download.pytorch.org/whl/cu124 && \
+    python -c "import torch; print('Torch CUDA:', torch.version.cuda, 'cuDNN:', torch.backends.cudnn.version())"
 
 # シェルスクリプトをコピーし、実行権限を付与
 COPY prepare_models.sh .
