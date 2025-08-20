@@ -30,8 +30,7 @@ WORKDIR /app
 # 1. torch (CUDA 11.8 variant) を先に固定インストール (依存のブレを防ぐ)
 # --------------------------------------------------------------------------------
 RUN pip install --upgrade pip setuptools wheel && \
-    pip install --index-url https://download.pytorch.org/whl/cu118 \
-        torch==2.1.2 torchvision==0.16.1 torchaudio==2.1.2 && \
+    pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 && \
     python -c "import torch;print('Torch:', torch.__version__, 'CUDA:', torch.version.cuda, 'cuDNN:', torch.backends.cudnn.version())"
 
 # --------------------------------------------------------------------------------
