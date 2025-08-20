@@ -13,49 +13,36 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 WORKDIR /app
 
-# OS 依存パッケージ
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         python3 python3-pip python3-dev \
         build-essential pkg-config \
         git ffmpeg libsndfile1 libsox-dev curl ca-certificates && \
     ln -sf /usr/bin/python3 /usr/bin/python && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
+    apt-get clean && rm -rf /var/lib/apt/lists/
 
-# --------------------------------------------------------------------------------
-# 1. torch (CUDA 11.8 variant) を先に固定インストール (依存のブレを防ぐ)
-# --------------------------------------------------------------------------------
-RUN pip install --upgrade pip setuptools wheel && \
-    pip install --index-url https://download.pytorch.org/whl/cu118 \
-        torch==2.1.2 torchvision==0.16.2 torchaudio==2.1.2 && \
-    python -c "import torch;print('Torch:', torch.__version__, 'CUDA:', torch.version.cuda, 'cuDNN:', torch.backends.cudnn.version())"
 
-# --------------------------------------------------------------------------------
-# 2. その他依存 (torch 以外)
-# --------------------------------------------------------------------------------
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-    
+COPY constraints.txt .
 
-# --------------------------------------------------------------------------------
-# 3. モデルダウンロード (HF トークンは BuildKit secret から; トークン自体はレイヤに残さない)
-# --------------------------------------------------------------------------------
+RUN pip install --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir \
+        --extra-index-url https://download.pytorch.org/whl/cu118 \
+        -r requirements.txt -c constraints.txt
+
+
 COPY download_models.py .
 
-# --mount=type=secret,id=hf_token で /run/secrets/hf_token にトークンが供給される
 RUN --mount=type=secret,id=hf_token \
     export HF_TOKEN="$(cat /run/secrets/hf_token)" && \
-    python download_models.py && \
+    echo "[Bake] HF_HUB_OFFLINE temporarily disabled for download." && \
+    HF_HUB_OFFLINE=0 python download_models.py && \
     test -f "$WHISPER_LOCAL_DIR/config.json" && \
     test -f "$PYANNOTE_CACHE_DIR/pipelines/speaker-diarization-3.1/config.yaml" && \
-    echo 'Model bake finished.'
+    echo "[Bake] Model bake finished."
 
-# --------------------------------------------------------------------------------
-# 4. 推論ハンドラ
-# --------------------------------------------------------------------------------
+ENV HF_HUB_OFFLINE=1
+
 COPY runpod_handler.py .
 
-# --------------------------------------------------------------------------------
-# 5. 最終コマンド
-# --------------------------------------------------------------------------------
 CMD ["python", "-u", "runpod_handler.py"]
