@@ -22,8 +22,6 @@ RUN pip install --upgrade pip setuptools wheel cython && \
     pip install --no-cache-dir -r requirements.txt \
         --extra-index-url https://download.pytorch.org/whl/cu121
 
-ENV LD_LIBRARY_PATH=/usr/local/lib/python3.11/site-packages/nvidia/cudnn/lib:$LD_LIBRARY_PATH
-
 # シェルスクリプトをコピーし、実行権限を付与
 COPY prepare_models.sh .
 RUN chmod +x ./prepare_models.sh
