@@ -6,8 +6,8 @@ import torch
 import torchaudio
 from typing import List, Dict, Any, Optional
 import runpod
+from pathlib import Path
 
-# ---------------- Warnings Suppression ----------------
 warnings.filterwarnings("ignore", module="pyannote.audio.utils.reproducibility")
 warnings.filterwarnings("ignore", module="pyannote.audio.models.blocks.pooling")
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -24,6 +24,7 @@ HF_TOKEN = (
 WHISPER_LOCAL_DIR = os.environ.get("WHISPER_LOCAL_DIR", "/app/models/whisper-large-v2")
 WHISPER_MODEL_NAME = os.environ.get("WHISPER_MODEL_NAME", "large-v2")
 COMPUTE_TYPE = os.environ.get("WHISPER_COMPUTE_TYPE", "float16" if DEVICE == "cuda" else "int8")
+PYANNOTE_PIPELINE_DIR = os.environ.get("PYANNOTE_PIPELINE_DIR", "/app/models/pyannote/pipeline_snapshot")
 
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
@@ -31,7 +32,6 @@ torch.backends.cudnn.allow_tf32 = True
 _whisper_model = None
 _diarization_pipeline = None
 
-# ---------------- Utility Functions ----------------
 def format_timestamp(seconds: float) -> str:
     ms = round(seconds * 1000)
     h = ms // 3_600_000
@@ -112,7 +112,6 @@ def smooth_labels(segments: List[Dict[str, Any]], merge_short_threshold: float, 
     if not segments:
         return []
     segs = [dict(s) for s in segments]
-    # Hold
     if hold > 0:
         prev = segs[0]["speaker"]
         for i in range(1, len(segs)):
@@ -121,7 +120,6 @@ def smooth_labels(segments: List[Dict[str, Any]], merge_short_threshold: float, 
                 cur["speaker"] = prev
             else:
                 prev = cur["speaker"]
-    # Sandwich / short
     if merge_short_threshold > 0 and len(segs) >= 3:
         for i in range(1, len(segs)-1):
             left, cur, right = segs[i-1], segs[i], segs[i+1]
@@ -132,12 +130,10 @@ def smooth_labels(segments: List[Dict[str, Any]], merge_short_threshold: float, 
     segs = _merge_adjacent_same_speaker(segs)
     return segs
 
-# ---------------- Model Loading ----------------
 def ensure_models_loaded():
     global _whisper_model, _diarization_pipeline
     if _whisper_model is None:
         from faster_whisper import WhisperModel
-        # ローカル展開済みディレクトリを優先
         if os.path.isdir(WHISPER_LOCAL_DIR) and any(
             os.path.exists(os.path.join(WHISPER_LOCAL_DIR, f))
             for f in ("model.bin", "model.bin.index.json", "config.json")
@@ -150,23 +146,26 @@ def ensure_models_loaded():
 
     if _diarization_pipeline is None:
         from pyannote.audio import Pipeline
-        print("[Init] Load pyannote pipeline (speaker-diarization-3.1)...")
-        # キャッシュ構造に合わせて通常の from_pretrained 呼び出し (HF_HUB_OFFLINE=1 ならローカルで解決)
-        try:
-            _diarization_pipeline = Pipeline.from_pretrained(
-                "pyannote/speaker-diarization-3.1",
-                use_auth_token=HF_TOKEN if HF_TOKEN and os.environ.get("HF_HUB_OFFLINE","1") != "1" else False
-            )
-        except Exception as e:
-            print(f"[Init] Online load failed ({e}), fallback offline.")
-            os.environ["HF_HUB_OFFLINE"] = "1"
-            _diarization_pipeline = Pipeline.from_pretrained(
-                "pyannote/speaker-diarization-3.1",
-                use_auth_token=False
-            )
+        local_pipeline = Path(PYANNOTE_PIPELINE_DIR)
+        if local_pipeline.exists():
+            print(f"[Init] Load pyannote pipeline from local snapshot: {local_pipeline}")
+            _diarization_pipeline = Pipeline.from_pretrained(str(local_pipeline), use_auth_token=False)
+        else:
+            print("[Init] Local pipeline snapshot not found, trying repo id (may fail offline)...")
+            try:
+                _diarization_pipeline = Pipeline.from_pretrained(
+                    "pyannote/speaker-diarization-3.1",
+                    use_auth_token=HF_TOKEN if HF_TOKEN and os.environ.get("HF_HUB_OFFLINE","1") != "1" else False
+                )
+            except Exception as e:
+                print(f"[Init] Online load failed ({e}), fallback offline repo id.")
+                os.environ["HF_HUB_OFFLINE"] = "1"
+                _diarization_pipeline = Pipeline.from_pretrained(
+                    "pyannote/speaker-diarization-3.1",
+                    use_auth_token=False
+                )
         _diarization_pipeline.to(torch.device(DEVICE))
 
-# ---------------- RunPod Handler ----------------
 def handler(job):
     try:
         ensure_models_loaded()
