@@ -19,9 +19,11 @@ HF_TOKEN = (
 if not HF_TOKEN:
     raise SystemExit("ERROR: HF_TOKEN is required to bake gated models.")
 
+hf_home = Path(os.environ.get("HF_HOME", str(Path.home() / ".cache" / "huggingface")))
+hf_cache = hf_home / "hub"
+
 whisper_target = Path(os.environ.get("WHISPER_LOCAL_DIR", "/app/models/whisper-large-v2"))
-pyannote_root  = Path(os.environ.get("PYANNOTE_CACHE_DIR", "/app/models/pyannote"))
-hf_cache       = Path(os.environ.get("HUGGING_FACE_HUB_CACHE", "/app/models/hf_cache"))
+pyannote_root = Path(os.environ.get("PYANNOTE_CACHE_DIR", "/app/models/pyannote"))
 
 for p in (whisper_target.parent, pyannote_root, hf_cache):
     p.mkdir(parents=True, exist_ok=True)
@@ -64,24 +66,17 @@ emb_dir = snapshot_download(
     cache_dir=str(hf_cache),
 )
 
-pipeline_dir = pyannote_root / "pipelines" / "speaker-diarization-3.1"
-if pipeline_dir.exists():
-    shutil.rmtree(pipeline_dir)
-pipeline_dir.mkdir(parents=True, exist_ok=True)
-
-orig_config = Path(pipeline_snapshot) / "config.yaml"
-if not orig_config.exists():
+snapshot_config = Path(pipeline_snapshot) / "config.yaml"
+if not snapshot_config.exists():
     raise SystemExit("ERROR: pipeline snapshot missing config.yaml")
-local_config = pipeline_dir / "config.yaml"
-shutil.copy2(orig_config, local_config)
 
-with open(local_config, "r") as f:
+with open(snapshot_config, "r") as f:
     cfg = yaml.safe_load(f) or {}
 params = cfg.setdefault("pipeline", {}).setdefault("params", {})
 params["segmentation"] = seg_dir
 params["embedding"] = emb_dir
-with open(local_config, "w") as f:
+with open(snapshot_config, "w") as f:
     yaml.dump(cfg, f, sort_keys=False)
 
-print(f"[Bake] Rewritten pipeline config: {local_config}")
+print(f"[Bake] Rewritten snapshot config: {snapshot_config}")
 print("[Bake] All models baked successfully.")

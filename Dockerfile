@@ -6,7 +6,7 @@ FROM nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=off \
-    HUGGING_FACE_HUB_CACHE=/app/models/hf_cache \
+    HF_HOME=/app/hf_home \
     WHISPER_LOCAL_DIR=/app/models/whisper-large-v2 \
     PYANNOTE_CACHE_DIR=/app/models/pyannote
 
