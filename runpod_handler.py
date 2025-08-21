@@ -6,7 +6,6 @@ import torch
 import torchaudio
 from typing import List, Dict, Any, Optional
 import runpod
-from pathlib import Path
 
 warnings.filterwarnings("ignore", module="pyannote.audio.utils.reproducibility")
 warnings.filterwarnings("ignore", module="pyannote.audio.models.blocks.pooling")
@@ -24,7 +23,6 @@ HF_TOKEN = (
 WHISPER_LOCAL_DIR = os.environ.get("WHISPER_LOCAL_DIR", "/app/models/whisper-large-v2")
 WHISPER_MODEL_NAME = os.environ.get("WHISPER_MODEL_NAME", "large-v2")
 COMPUTE_TYPE = os.environ.get("WHISPER_COMPUTE_TYPE", "float16" if DEVICE == "cuda" else "int8")
-PYANNOTE_PIPELINE_DIR = os.environ.get("PYANNOTE_PIPELINE_DIR", "/app/models/pyannote/pipeline_snapshot")
 
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
@@ -146,24 +144,21 @@ def ensure_models_loaded():
 
     if _diarization_pipeline is None:
         from pyannote.audio import Pipeline
-        local_pipeline = Path(PYANNOTE_PIPELINE_DIR)
-        if local_pipeline.exists():
-            print(f"[Init] Load pyannote pipeline from local snapshot: {local_pipeline}")
-            _diarization_pipeline = Pipeline.from_pretrained(str(local_pipeline), use_auth_token=False)
-        else:
-            print("[Init] Local pipeline snapshot not found, trying repo id (may fail offline)...")
-            try:
-                _diarization_pipeline = Pipeline.from_pretrained(
-                    "pyannote/speaker-diarization-3.1",
-                    use_auth_token=HF_TOKEN if HF_TOKEN and os.environ.get("HF_HUB_OFFLINE","1") != "1" else False
-                )
-            except Exception as e:
-                print(f"[Init] Online load failed ({e}), fallback offline repo id.")
-                os.environ["HF_HUB_OFFLINE"] = "1"
-                _diarization_pipeline = Pipeline.from_pretrained(
-                    "pyannote/speaker-diarization-3.1",
-                    use_auth_token=False
-                )
+        repo_id = "pyannote/speaker-diarization-3.1"
+        print(f"[Init] Load pyannote pipeline via repo id (offline cache): {repo_id}")
+        try:
+            _diarization_pipeline = Pipeline.from_pretrained(
+                repo_id,
+                use_auth_token=False  # HF_HUB_OFFLINE=1 ならネットアクセスせずキャッシュ解決
+            )
+        except Exception as e:
+            print(f"[Warn] Offline load failed: {e}")
+            if HF_TOKEN:
+                print("[Init] Retrying online with token...")
+                os.environ["HF_HUB_OFFLINE"] = "0"
+                _diarization_pipeline = Pipeline.from_pretrained(repo_id, use_auth_token=HF_TOKEN)
+            else:
+                raise
         _diarization_pipeline.to(torch.device(DEVICE))
 
 def handler(job):
