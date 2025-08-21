@@ -5,7 +5,7 @@ torchaudio
 faster-whisper[gpu]==1.0.3
 pyannote.audio==3.1.1
 python-dotenv
-transformers
+transformers==4.39.3
 accelerate
 punctuators==0.0.5
 git+https://github.com/huggingface/diarizers.git
