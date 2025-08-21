@@ -28,8 +28,8 @@ COPY constraints.txt .
 RUN pip install --upgrade pip setuptools wheel && \
     pip install --no-cache-dir \
         --extra-index-url https://download.pytorch.org/whl/cu118 \
-        -r requirements.txt -c constraints.txt && \
-        
+        -r requirements.txt -c constraints.txt
+
 
 COPY download_models.py .
 
