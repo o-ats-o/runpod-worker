@@ -42,6 +42,35 @@ def assert_exists(path: Path, desc: str):
         print(f"[Bake][ERROR] Missing {desc}: {path}", file=sys.stderr)
         raise SystemExit(1)
 
+def ensure_ref(repo_id: str, snapshot_path: Path):
+    """
+    repo_id: 'namespace/name'
+    snapshot_path: .../snapshots/<commit_hash>
+    refs/main が無ければ作成する
+    """
+    commit_hash = snapshot_path.name
+    if len(commit_hash) != 40 or not all(c in "0123456789abcdef" for c in commit_hash.lower()):
+        print(f"[Bake][WARN] Snapshot tail '{commit_hash}' does not look like a commit SHA.")
+    repo_cache_dir = hf_cache / f"models--{repo_id.replace('/','--')}"
+    refs_dir = repo_cache_dir / "refs"
+    refs_dir.mkdir(exist_ok=True)
+    main_ref = refs_dir / "main"
+    if not main_ref.exists():
+        main_ref.write_text(commit_hash)
+        print(f"[Bake] Created refs/main for {repo_id} -> {commit_hash}")
+    else:
+        existing = main_ref.read_text().strip()
+        if existing != commit_hash:
+            # 競合する場合は最新 snapshot を優先して上書き
+            main_ref.write_text(commit_hash)
+            print(f"[Bake] Updated refs/main ({existing} -> {commit_hash})")
+        else:
+            print(f"[Bake] refs/main already OK ({commit_hash})")
+    # 最終チェック
+    if not main_ref.exists():
+        raise SystemExit(f"[Bake][ERROR] Failed to ensure refs/main for {repo_id}")
+    return main_ref
+
 print("[Bake] Downloading faster-whisper large-v2 ...")
 whisper_repo = "Systran/faster-whisper-large-v2"
 whisper_snapshot = snapshot_download(
@@ -51,6 +80,7 @@ whisper_snapshot = snapshot_download(
 )
 ensure_dir_clean_link(whisper_target, Path(whisper_snapshot))
 assert_exists(whisper_target / "config.json", "whisper config.json")
+ensure_ref(whisper_repo, Path(whisper_snapshot))
 print(f"[Bake] Whisper symlink: {whisper_target} -> {whisper_snapshot}")
 
 print("[Bake] Downloading pyannote speaker-diarization-3.1 ...")
@@ -63,6 +93,7 @@ pipeline_snapshot = snapshot_download(
 ensure_dir_clean_link(pyannote_symlink, Path(pipeline_snapshot))
 snapshot_config = Path(pipeline_snapshot) / "config.yaml"
 assert_exists(snapshot_config, "pipeline config.yaml")
+ensure_ref(PIPELINE, Path(pipeline_snapshot))
 
 print("[Bake] Downloading pyannote segmentation + speechbrain embedding ...")
 SEGMENTATION = "pyannote/segmentation-3.0"
@@ -78,9 +109,10 @@ emb_dir = snapshot_download(
     cache_dir=str(hf_cache),
 )
 assert_exists(Path(seg_dir) / "config.yaml", "segmentation config")
-# emb_dir may not have config.yaml; skip strict check.
+ensure_ref(SEGMENTATION, Path(seg_dir))
+ensure_ref(EMBEDDING, Path(emb_dir))
 
-# Rewrite snapshot config
+# Rewrite snapshot config (pipeline)
 with open(snapshot_config, "r") as f:
     cfg = yaml.safe_load(f) or {}
 params = cfg.setdefault("pipeline", {}).setdefault("params", {})
@@ -90,4 +122,11 @@ with open(snapshot_config, "w") as f:
     yaml.dump(cfg, f, sort_keys=False)
 
 print(f"[Bake] Rewritten snapshot config: {snapshot_config}")
+
+# 最終表示（パス + refs 確認）
+for rid in (whisper_repo, PIPELINE, SEGMENTATION, EMBEDDING):
+    repo_cache_dir = hf_cache / f"models--{rid.replace('/','--')}"
+    ref_file = repo_cache_dir / "refs" / "main"
+    print(f"[Bake] refs check {rid}: {ref_file.exists()} ({ref_file.read_text().strip() if ref_file.exists() else 'N/A'})")
+
 print("[Bake] All models baked successfully.")

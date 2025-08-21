@@ -6,6 +6,7 @@ import torch
 import torchaudio
 from typing import List, Dict, Any, Optional
 import runpod
+from huggingface_hub.errors import LocalEntryNotFoundError, OfflineModeIsEnabled
 
 warnings.filterwarnings("ignore", module="pyannote.audio.utils.reproducibility")
 warnings.filterwarnings("ignore", module="pyannote.audio.models.blocks.pooling")
@@ -128,6 +129,23 @@ def smooth_labels(segments: List[Dict[str, Any]], merge_short_threshold: float, 
     segs = _merge_adjacent_same_speaker(segs)
     return segs
 
+def load_diarization_pipeline():
+    from pyannote.audio import Pipeline
+    repo_id = "pyannote/speaker-diarization-3.1"
+    try:
+        print(f"[Init] Offline load attempt: {repo_id}")
+        return Pipeline.from_pretrained(repo_id, use_auth_token=False)
+    except (LocalEntryNotFoundError, OfflineModeIsEnabled) as e:
+        print(f"[Init][OfflineFail] {type(e).__name__}: {e}")
+        if not HF_TOKEN:
+            raise RuntimeError("Offline cache missing and HF_TOKEN not provided for fallback.")
+        print("[Init] Fallback online load with token...")
+        os.environ["HF_HUB_OFFLINE"] = "0"
+        p = Pipeline.from_pretrained(repo_id, use_auth_token=HF_TOKEN)
+        # Option: オフラインへ戻したいなら次行を有効化
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        return p
+
 def ensure_models_loaded():
     global _whisper_model, _diarization_pipeline
     if _whisper_model is None:
@@ -139,26 +157,10 @@ def ensure_models_loaded():
             print(f"[Init] Load Whisper local: {WHISPER_LOCAL_DIR}")
             _whisper_model = WhisperModel(WHISPER_LOCAL_DIR, device=DEVICE, compute_type=COMPUTE_TYPE)
         else:
-            print(f"[Init] Local Whisper not found, download by name: {WHISPER_MODEL_NAME}")
+            print(f"[Init] Local Whisper not found, fetching by name: {WHISPER_MODEL_NAME}")
             _whisper_model = WhisperModel(WHISPER_MODEL_NAME, device=DEVICE, compute_type=COMPUTE_TYPE)
-
     if _diarization_pipeline is None:
-        from pyannote.audio import Pipeline
-        repo_id = "pyannote/speaker-diarization-3.1"
-        print(f"[Init] Load pyannote pipeline via repo id (offline cache): {repo_id}")
-        try:
-            _diarization_pipeline = Pipeline.from_pretrained(
-                repo_id,
-                use_auth_token=False  # HF_HUB_OFFLINE=1 ならネットアクセスせずキャッシュ解決
-            )
-        except Exception as e:
-            print(f"[Warn] Offline load failed: {e}")
-            if HF_TOKEN:
-                print("[Init] Retrying online with token...")
-                os.environ["HF_HUB_OFFLINE"] = "0"
-                _diarization_pipeline = Pipeline.from_pretrained(repo_id, use_auth_token=HF_TOKEN)
-            else:
-                raise
+        _diarization_pipeline = load_diarization_pipeline()
         _diarization_pipeline.to(torch.device(DEVICE))
 
 def handler(job):
