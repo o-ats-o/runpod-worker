@@ -42,7 +42,7 @@ jobs:
           context: .
           file: ./Dockerfile
           push: true
-          # 必要ならマルチプラットフォーム (RunPod は通常 linux/amd64)
+          no-cache: true
           platforms: linux/amd64
           tags: |
             ghcr.io/${{ github.repository }}:latest
