@@ -6,6 +6,7 @@ import torch
 import torchaudio
 from typing import List, Dict, Any, Optional
 import runpod
+from pathlib import Path
 from huggingface_hub.errors import LocalEntryNotFoundError, OfflineModeIsEnabled
 
 warnings.filterwarnings("ignore", module="pyannote.audio.utils.reproducibility")
@@ -25,11 +26,17 @@ WHISPER_LOCAL_DIR = os.environ.get("WHISPER_LOCAL_DIR", "/app/models/whisper-lar
 WHISPER_MODEL_NAME = os.environ.get("WHISPER_MODEL_NAME", "large-v2")
 COMPUTE_TYPE = os.environ.get("WHISPER_COMPUTE_TYPE", "float16" if DEVICE == "cuda" else "int8")
 
+PYANNOTE_PIPELINE_COMMIT = os.environ.get("PYANNOTE_PIPELINE_COMMIT", "").strip()
+PYANNOTE_SYMLINK = os.environ.get("PYANNOTE_PIPELINE_SYMLINK", "/app/models/pyannote/pipeline_snapshot")
+
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
 
 _whisper_model = None
 _diarization_pipeline = None
+
+def _debug(msg: str):
+    print("[Debug]", msg, flush=True)
 
 def format_timestamp(seconds: float) -> str:
     ms = round(seconds * 1000)
@@ -129,20 +136,42 @@ def smooth_labels(segments: List[Dict[str, Any]], merge_short_threshold: float, 
     segs = _merge_adjacent_same_speaker(segs)
     return segs
 
+def _get_pipeline_commit():
+    if PYANNOTE_PIPELINE_COMMIT:
+        return PYANNOTE_PIPELINE_COMMIT
+    # symlink から推定
+    try:
+        real = Path(PYANNOTE_SYMLINK).resolve()
+        return real.name if len(real.name) == 40 else ""
+    except Exception:
+        return ""
+
 def load_diarization_pipeline():
     from pyannote.audio import Pipeline
     repo_id = "pyannote/speaker-diarization-3.1"
+    commit = _get_pipeline_commit()
+    if commit:
+        _debug(f"Using pipeline commit: {commit}")
+        try:
+            return Pipeline.from_pretrained(
+                repo_id,
+                revision=commit,
+                use_auth_token=HF_TOKEN or False,
+                local_files_only=True  # ネット完全遮断
+            )
+        except Exception as e:
+            _debug(f"Commit-specific local load failed: {e}")
+    # ここまでで失敗したら従来 offline main
     try:
-        print(f"[Init] Offline load attempt: {repo_id}")
+        _debug("Offline load attempt (main)")
         return Pipeline.from_pretrained(repo_id, use_auth_token=False)
     except (LocalEntryNotFoundError, OfflineModeIsEnabled) as e:
-        print(f"[Init][OfflineFail] {type(e).__name__}: {e}")
+        _debug(f"Offline(main) failed: {e}")
         if not HF_TOKEN:
-            raise RuntimeError("Offline cache missing and HF_TOKEN not provided for fallback.")
-        print("[Init] Fallback online load with token...")
+            raise RuntimeError("Offline cache missing and HF_TOKEN not set for fallback.")
+        _debug("Online fallback with token...")
         os.environ["HF_HUB_OFFLINE"] = "0"
         p = Pipeline.from_pretrained(repo_id, use_auth_token=HF_TOKEN)
-        # Option: オフラインへ戻したいなら次行を有効化
         os.environ["HF_HUB_OFFLINE"] = "1"
         return p
 

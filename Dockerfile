@@ -36,15 +36,14 @@ COPY download_models.py .
 RUN --mount=type=secret,id=hf_token \
     set -e; \
     export HF_TOKEN="$(cat /run/secrets/hf_token)"; \
-    if [ "$FORCE_MODEL_REFRESH" = "true" ] || [ ! -e "$WHISPER_LOCAL_DIR/config.json" ] || [ ! -e "$PYANNOTE_CACHE_DIR/pipeline_snapshot/config.yaml" ]; then \
-        echo "[Bake] Starting model download (FORCE_MODEL_REFRESH=$FORCE_MODEL_REFRESH)"; \
-        HF_HUB_OFFLINE=0 python download_models.py; \
-    else \
-        echo "[Bake] Skip model download (already present)"; \
-    fi; \
-    echo "[Bake] Listing baked artifacts:"; \
-    find /app/models -maxdepth 4 -type f -name 'config.yaml' -o -name 'model.bin' | sed 's/^/[Bake] /'; \
-    echo '[Bake] Model bake finished.'
+    HF_HUB_OFFLINE=0 python download_models.py; \
+    echo "[Bake] Model bake finished."; \
+    if [ -f /app/models/pyannote/pipeline_commit.txt ]; then \
+        COMMIT=$(cat /app/models/pyannote/pipeline_commit.txt | tr -d '\r\n'); \
+        echo "PYANNOTE_PIPELINE_COMMIT=$COMMIT" >> /etc/environment; \
+        echo "export PYANNOTE_PIPELINE_COMMIT=$COMMIT" >> /etc/profile; \
+        echo "[Bake] Exported PYANNOTE_PIPELINE_COMMIT=$COMMIT"; \
+    fi
 
 ENV HF_HUB_OFFLINE=1
 

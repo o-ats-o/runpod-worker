@@ -25,6 +25,7 @@ hf_cache = Path(os.environ.get("HUGGINGFACE_HUB_CACHE", str(hf_home / "hub")))
 whisper_target = Path(os.environ.get("WHISPER_LOCAL_DIR", "/app/models/whisper-large-v2"))
 pyannote_root = Path(os.environ.get("PYANNOTE_CACHE_DIR", "/app/models/pyannote"))
 pyannote_symlink = pyannote_root / "pipeline_snapshot"
+pipeline_commit_file = pyannote_root / "pipeline_commit.txt"
 
 for p in (whisper_target.parent, pyannote_root, hf_cache):
     p.mkdir(parents=True, exist_ok=True)
@@ -43,14 +44,7 @@ def assert_exists(path: Path, desc: str):
         raise SystemExit(1)
 
 def ensure_ref(repo_id: str, snapshot_path: Path):
-    """
-    repo_id: 'namespace/name'
-    snapshot_path: .../snapshots/<commit_hash>
-    refs/main が無ければ作成する
-    """
     commit_hash = snapshot_path.name
-    if len(commit_hash) != 40 or not all(c in "0123456789abcdef" for c in commit_hash.lower()):
-        print(f"[Bake][WARN] Snapshot tail '{commit_hash}' does not look like a commit SHA.")
     repo_cache_dir = hf_cache / f"models--{repo_id.replace('/','--')}"
     refs_dir = repo_cache_dir / "refs"
     refs_dir.mkdir(exist_ok=True)
@@ -61,15 +55,17 @@ def ensure_ref(repo_id: str, snapshot_path: Path):
     else:
         existing = main_ref.read_text().strip()
         if existing != commit_hash:
-            # 競合する場合は最新 snapshot を優先して上書き
             main_ref.write_text(commit_hash)
             print(f"[Bake] Updated refs/main ({existing} -> {commit_hash})")
         else:
             print(f"[Bake] refs/main already OK ({commit_hash})")
-    # 最終チェック
     if not main_ref.exists():
         raise SystemExit(f"[Bake][ERROR] Failed to ensure refs/main for {repo_id}")
-    return main_ref
+    return commit_hash
+
+def write_commit_file(path: Path, commit_hash: str):
+    path.write_text(commit_hash + "\n")
+    print(f"[Bake] Wrote pipeline commit hash: {path} ({commit_hash})")
 
 print("[Bake] Downloading faster-whisper large-v2 ...")
 whisper_repo = "Systran/faster-whisper-large-v2"
@@ -93,7 +89,8 @@ pipeline_snapshot = snapshot_download(
 ensure_dir_clean_link(pyannote_symlink, Path(pipeline_snapshot))
 snapshot_config = Path(pipeline_snapshot) / "config.yaml"
 assert_exists(snapshot_config, "pipeline config.yaml")
-ensure_ref(PIPELINE, Path(pipeline_snapshot))
+pipeline_commit = ensure_ref(PIPELINE, Path(pipeline_snapshot))
+write_commit_file(pipeline_commit_file, pipeline_commit)
 
 print("[Bake] Downloading pyannote segmentation + speechbrain embedding ...")
 SEGMENTATION = "pyannote/segmentation-3.0"
@@ -112,7 +109,6 @@ assert_exists(Path(seg_dir) / "config.yaml", "segmentation config")
 ensure_ref(SEGMENTATION, Path(seg_dir))
 ensure_ref(EMBEDDING, Path(emb_dir))
 
-# Rewrite snapshot config (pipeline)
 with open(snapshot_config, "r") as f:
     cfg = yaml.safe_load(f) or {}
 params = cfg.setdefault("pipeline", {}).setdefault("params", {})
@@ -123,7 +119,6 @@ with open(snapshot_config, "w") as f:
 
 print(f"[Bake] Rewritten snapshot config: {snapshot_config}")
 
-# 最終表示（パス + refs 確認）
 for rid in (whisper_repo, PIPELINE, SEGMENTATION, EMBEDDING):
     repo_cache_dir = hf_cache / f"models--{rid.replace('/','--')}"
     ref_file = repo_cache_dir / "refs" / "main"
