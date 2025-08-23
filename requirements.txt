@@ -1,5 +1,4 @@
 torch
-torchvision
 torchaudio
 
 faster-whisper[gpu]==1.0.3
