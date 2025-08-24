@@ -69,6 +69,7 @@ RUN apt-get update && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Builderステージから必要なファイルのみをコピー
+COPY --from=builder /app/hf_home /app/hf_home
 COPY --from=builder /usr/local/lib/python3.10/dist-packages /usr/local/lib/python3.10/dist-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 COPY --from=builder /app/models /app/models
