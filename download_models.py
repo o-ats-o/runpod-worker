@@ -27,14 +27,6 @@ for p in (whisper_target.parent, pyannote_root, hf_cache):
     p.mkdir(parents=True, exist_ok=True)
 
 # --- ヘルパー関数 ---
-def ensure_dir_clean_link(link_path: Path, target_path: Path):
-    if link_path.exists() or link_path.is_symlink():
-        if link_path.is_dir() and not link_path.is_symlink():
-            shutil.rmtree(link_path)
-        else:
-            link_path.unlink()
-    link_path.symlink_to(target_path, target_is_directory=True)
-
 def assert_exists(path: Path, desc: str):
     if not path.exists():
         print(f" Missing {desc}: {path}", file=sys.stderr)
@@ -43,14 +35,19 @@ def assert_exists(path: Path, desc: str):
 # --- Whisperモデルのダウンロード ---
 print(" Downloading faster-whisper large-v2...")
 whisper_repo = "Systran/faster-whisper-large-v2"
-whisper_snapshot = snapshot_download(
+whisper_snapshot_path = snapshot_download(
     repo_id=whisper_repo,
     use_auth_token=HF_TOKEN,
     cache_dir=str(hf_cache),
 )
-ensure_dir_clean_link(whisper_target, Path(whisper_snapshot))
+
+print(f" Copying whisper model from {whisper_snapshot_path} to {whisper_target}...")
+if whisper_target.exists():
+    shutil.rmtree(whisper_target)
+shutil.copytree(whisper_snapshot_path, whisper_target)
 assert_exists(whisper_target / "config.json", "whisper config.json")
-print(f" Whisper symlink: {whisper_target} -> {whisper_snapshot}")
+print(" Whisper model copied successfully.")
+
 
 # --- Pyannoteモデルのダウンロード ---
 print(" Downloading pyannote models...")
@@ -69,8 +66,6 @@ print(f" Segmentation model path: {segmentation_model_path}")
 print(f" Embedding model path: {embedding_model_path}")
 
 # --- diarization_config.yaml の生成 ---
-# ランタイムでパイプラインをオフラインで読み込むための設定ファイル
-# ダウンロードしたモデルへの絶対パスをここにハードコードする
 print(f" Generating configuration file at {config_output_path}...")
 
 config_data = {
@@ -84,7 +79,6 @@ config_data = {
             "embedding_exclude_overlap": True,
         }
     },
-    # パイプラインのハイパーパラメータ（必要に応じて調整）
     "params": {
         "segmentation": {
             "min_duration_off": 0.0,
@@ -92,8 +86,6 @@ config_data = {
         "clustering": {
             "method": "centroid",
             "min_cluster_size": 15,
-            # 閾値は元のconfig.yamlから持ってくるか、最適化する
-            # "threshold" is dynamically set by pyannote, so we don't set it here
         }
     }
 }
