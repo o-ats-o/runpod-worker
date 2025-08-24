@@ -1,13 +1,13 @@
-torch==2.1.2
-torchaudio==2.1.2
+torch==2.2.0
+torchaudio==2.2.0
 
 numpy<2.0
 faster-whisper[gpu]==1.0.3
 pyannote.audio==3.2.0
 python-dotenv
-onnxruntime-gpu==1.17.1
+onnxruntime-gpu==1.20.0
 packaging<25.0
 tqdm
 runpod
 huggingface_hub
-pyyaml
+pyyaml  
