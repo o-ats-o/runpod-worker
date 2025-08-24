@@ -18,8 +18,8 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 DEFAULT_LANGUAGE = os.environ.get("DEFAULT_TRANSCRIBE_LANG", "ja")
 HF_TOKEN = os.environ.get("HUGGING_FACE_HUB_TOKEN") or os.environ.get("HF_TOKEN")
-
 WHISPER_LOCAL_DIR = os.environ.get("WHISPER_LOCAL_DIR", "/app/models/whisper-large-v2")
+# ---------------------------------------------
 WHISPER_MODEL_NAME = os.environ.get("WHISPER_MODEL_NAME", "large-v2")
 COMPUTE_TYPE = os.environ.get("WHISPER_COMPUTE_TYPE", "float16" if DEVICE == "cuda" else "int8")
 
@@ -34,10 +34,7 @@ torch.backends.cudnn.allow_tf32 = True
 _whisper_model = None
 _diarization_pipeline = None
 
-def _debug(msg: str):
-    print("", msg, flush=True)
-
-#... (format_timestamp, _segment_durationなどのヘルパー関数は変更なし)...
+# ... (format_timestamp, _segment_durationなどのヘルパー関数は変更なし)...
 def format_timestamp(seconds: float) -> str:
     ms = round(seconds * 1000)
     h = ms // 3_600_000
@@ -94,7 +91,7 @@ def determine_speaker(segment, diarization_result, prev: str, overlap_ratio_thre
         spk = best_speaker_for_interval(ws, we, diarization_result, overlap_ratio_threshold)
         if spk!= "UNKNOWN_SPEAKER": votes[spk] = votes.get(spk, 0.0) + (we - ws)
     if not votes: return prev if prev and prev!= "UNKNOWN_SPEAKER" else max_overlap_speaker(segment.start, segment.end, diarization_result, prev)
-    return max(votes.items(), key=lambda kv: kv)
+    return max(list(votes.items()), key=lambda kv: kv[1])[0]
 def smooth_labels(segments: List[Dict[str, Any]], merge_short_threshold: float, hold: float) -> List[Dict[str, Any]]:
     if not segments:
         return []
@@ -123,13 +120,13 @@ def load_diarization_pipeline():
     """
     ビルド時に生成された設定ファイルから、決定論的に
     pyannoteパイプラインを読み込む。
-    フォールバックロジックは不要。
     """
     from pyannote.audio import Pipeline
     print(f"[Init] Load Pyannote pipeline from config: {DIARIZATION_CONFIG_PATH}")
     if not Path(DIARIZATION_CONFIG_PATH).exists():
         raise FileNotFoundError(f"Diarization config not found at {DIARIZATION_CONFIG_PATH}. The Docker image may be built incorrectly.")
     
+    # from_pretrainedは、YAMLファイル内のパス（/app/models/...）を直接読み込んでくれる
     return Pipeline.from_pretrained(DIARIZATION_CONFIG_PATH)
 
 def ensure_models_loaded():
@@ -139,23 +136,19 @@ def ensure_models_loaded():
     global _whisper_model, _diarization_pipeline
     if _whisper_model is None:
         from faster_whisper import WhisperModel
-        if os.path.isdir(WHISPER_LOCAL_DIR) and any(
-            os.path.exists(os.path.join(WHISPER_LOCAL_DIR, f))
-            for f in ("model.bin", "model.bin.index.json", "config.json")
-        ):
+        # ローカルディレクトリの存在確認のみで十分。オンラインフォールバックは不要。
+        if os.path.isdir(WHISPER_LOCAL_DIR):
             print(f"[Init] Load Whisper local: {WHISPER_LOCAL_DIR}")
             _whisper_model = WhisperModel(WHISPER_LOCAL_DIR, device=DEVICE, compute_type=COMPUTE_TYPE)
         else:
-            print(f"[Init] Local Whisper not found, fetching by name: {WHISPER_MODEL_NAME}")
-            _whisper_model = WhisperModel(WHISPER_MODEL_NAME, device=DEVICE, compute_type=COMPUTE_TYPE)
+            # このエラーはビルドが失敗していることを示す
+            raise FileNotFoundError(f"Whisper model directory not found at {WHISPER_LOCAL_DIR}. The Docker image may be built incorrectly.")
     
     if _diarization_pipeline is None:
-        # 簡素化された読み込み関数を呼び出す
         _diarization_pipeline = load_diarization_pipeline()
         _diarization_pipeline.to(torch.device(DEVICE))
 
 # --- RunPodハンドラ ---
-
 def handler(job):
     try:
         ensure_models_loaded()
@@ -186,7 +179,6 @@ def handler(job):
         diarization_result = _diarization_pipeline({"waveform": waveform, "sample_rate": sample_rate})
 
         print("[Job] Transcription...")
-        # torchaudioでロードしたwaveformを直接渡すことで一時ファイルを再利用しない
         segments_iter, info = _whisper_model.transcribe(
             waveform.squeeze(0).numpy(),
             beam_size=5,
@@ -227,6 +219,7 @@ def handler(job):
         print(f"Error during job execution: {e}")
         traceback.print_exc()
         return {"error": f"処理中に例外が発生しました: {e}"}
+
 
 # --- サーバー起動 ---
 if __name__ == "__main__":

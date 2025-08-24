@@ -11,9 +11,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=off \
     HF_HOME=/app/hf_home \
-    HUGGINGFACE_HUB_CACHE=/app/hf_home/hub \
-    WHISPER_LOCAL_DIR=/app/models/whisper-large-v2 \
-    PYANNOTE_CACHE_DIR=/app/models/pyannote
+    HUGGINGFACE_HUB_CACHE=/app/hf_home/hub
 
 WORKDIR /app
 
@@ -53,11 +51,9 @@ FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=off \
-    HF_HOME=/app/hf_home \
-    HUGGINGFACE_HUB_CACHE=/app/hf_home/hub \
-    WHISPER_LOCAL_DIR=/app/models/whisper-large-v2 \
-    # オフラインモードを強制
-    HF_HUB_OFFLINE=1
+    # オフラインモードを強制 (キャッシュは存在しないが念のため設定)
+    HF_HUB_OFFLINE=1 \
+    WHISPER_LOCAL_DIR=/app/models/whisper-large-v2
 
 WORKDIR /app
 
@@ -69,7 +65,6 @@ RUN apt-get update && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Builderステージから必要なファイルのみをコピー
-COPY --from=builder /app/hf_home /app/hf_home
 COPY --from=builder /usr/local/lib/python3.10/dist-packages /usr/local/lib/python3.10/dist-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 COPY --from=builder /app/models /app/models
