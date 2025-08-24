@@ -73,6 +73,6 @@ COPY --from=builder /usr/local/lib/python3.10/dist-packages /usr/local/lib/pytho
 COPY --from=builder /usr/local/bin /usr/local/bin
 COPY --from=builder /app/models /app/models
 COPY --from=builder /app/diarization_config.yaml /app/diarization_config.yaml
-COPY runpod_handler.py.
+COPY runpod_handler.py .
 
 CMD ["python", "-u", "runpod_handler.py"]
