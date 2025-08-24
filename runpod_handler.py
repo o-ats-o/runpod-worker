@@ -7,37 +7,37 @@ import torchaudio
 from typing import List, Dict, Any, Optional
 import runpod
 from pathlib import Path
-from huggingface_hub.errors import LocalEntryNotFoundError, OfflineModeIsEnabled
 
+# --- 警告フィルタ ---
 warnings.filterwarnings("ignore", module="pyannote.audio.utils.reproducibility")
 warnings.filterwarnings("ignore", module="pyannote.audio.models.blocks.pooling")
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
 
+# --- 定数と環境変数 ---
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 DEFAULT_LANGUAGE = os.environ.get("DEFAULT_TRANSCRIBE_LANG", "ja")
-HF_TOKEN = (
-    os.environ.get("HUGGING_FACE_TOKEN")
-    or os.environ.get("HF_TOKEN")
-    or os.environ.get("HUGGING_FACE_HUB_TOKEN")
-)
+HF_TOKEN = os.environ.get("HUGGING_FACE_HUB_TOKEN") or os.environ.get("HF_TOKEN")
 
 WHISPER_LOCAL_DIR = os.environ.get("WHISPER_LOCAL_DIR", "/app/models/whisper-large-v2")
 WHISPER_MODEL_NAME = os.environ.get("WHISPER_MODEL_NAME", "large-v2")
 COMPUTE_TYPE = os.environ.get("WHISPER_COMPUTE_TYPE", "float16" if DEVICE == "cuda" else "int8")
 
-PYANNOTE_PIPELINE_COMMIT = os.environ.get("PYANNOTE_PIPELINE_COMMIT", "").strip()
-PYANNOTE_SYMLINK = os.environ.get("PYANNOTE_PIPELINE_SYMLINK", "/app/models/pyannote/pipeline_snapshot")
+# ビルド時に生成される設定ファイルのパス
+DIARIZATION_CONFIG_PATH = "/app/diarization_config.yaml"
 
+# PyTorchパフォーマンス設定
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
 
+# --- グローバルモデル変数 ---
 _whisper_model = None
 _diarization_pipeline = None
 
 def _debug(msg: str):
-    print("[Debug]", msg, flush=True)
+    print("", msg, flush=True)
 
+#... (format_timestamp, _segment_durationなどのヘルパー関数は変更なし)...
 def format_timestamp(seconds: float) -> str:
     ms = round(seconds * 1000)
     h = ms // 3_600_000
@@ -67,53 +67,34 @@ def _merge_adjacent_same_speaker(segments: List[Dict[str, Any]], max_gap: float 
 
 def _compute_overlap_ratio(s0: float, s1: float, t0: float, t1: float) -> float:
     length = max(0.0, s1 - s0)
-    if length <= 0:
-        return 0.0
+    if length <= 0: return 0.0
     ov = min(s1, t1) - max(s0, t0)
-    if ov <= 0:
-        return 0.0
+    if ov <= 0: return 0.0
     return ov / length
-
 def best_speaker_for_interval(start: float, end: float, diarization_result, threshold: float) -> str:
-    best = "UNKNOWN_SPEAKER"
-    best_ratio = 0.0
+    best, best_ratio = "UNKNOWN_SPEAKER", 0.0
     for turn, _, spk in diarization_result.itertracks(yield_label=True):
         ratio = _compute_overlap_ratio(start, end, turn.start, turn.end)
-        if ratio > best_ratio:
-            best_ratio = ratio
-            best = spk
-    if best_ratio < threshold:
-        return "UNKNOWN_SPEAKER"
-    return best
-
+        if ratio > best_ratio: best_ratio, best = ratio, spk
+    return best if best_ratio >= threshold else "UNKNOWN_SPEAKER"
 def max_overlap_speaker(start: float, end: float, diarization_result, prev: Optional[str]) -> str:
-    best = "UNKNOWN_SPEAKER"
-    best_ov = 0.0
+    best, best_ov = "UNKNOWN_SPEAKER", 0.0
     for turn, _, spk in diarization_result.itertracks(yield_label=True):
         ov = min(end, turn.end) - max(start, turn.start)
-        if ov > best_ov:
-            best_ov = ov
-            best = spk
-    if best == "UNKNOWN_SPEAKER" and prev and prev != "UNKNOWN_SPEAKER":
-        return prev
+        if ov > best_ov: best_ov, best = ov, spk
+    if best == "UNKNOWN_SPEAKER" and prev and prev!= "UNKNOWN_SPEAKER": return prev
     return best
-
 def determine_speaker(segment, diarization_result, prev: str, overlap_ratio_threshold: float) -> str:
     words = getattr(segment, "words", None)
-    if not words:
-        return max_overlap_speaker(segment.start, segment.end, diarization_result, prev)
+    if not words: return max_overlap_speaker(segment.start, segment.end, diarization_result, prev)
     votes = {}
     for w in words:
         ws, we = getattr(w, "start", None), getattr(w, "end", None)
-        if ws is None or we is None or we <= ws:
-            continue
+        if ws is None or we is None or we <= ws: continue
         spk = best_speaker_for_interval(ws, we, diarization_result, overlap_ratio_threshold)
-        if spk != "UNKNOWN_SPEAKER":
-            votes[spk] = votes.get(spk, 0.0) + (we - ws)
-    if not votes:
-        return prev if prev and prev != "UNKNOWN_SPEAKER" else max_overlap_speaker(segment.start, segment.end, diarization_result, prev)
-    return max(votes.items(), key=lambda kv: kv[1])[0]
-
+        if spk!= "UNKNOWN_SPEAKER": votes[spk] = votes.get(spk, 0.0) + (we - ws)
+    if not votes: return prev if prev and prev!= "UNKNOWN_SPEAKER" else max_overlap_speaker(segment.start, segment.end, diarization_result, prev)
+    return max(votes.items(), key=lambda kv: kv)
 def smooth_labels(segments: List[Dict[str, Any]], merge_short_threshold: float, hold: float) -> List[Dict[str, Any]]:
     if not segments:
         return []
@@ -136,46 +117,25 @@ def smooth_labels(segments: List[Dict[str, Any]], merge_short_threshold: float, 
     segs = _merge_adjacent_same_speaker(segs)
     return segs
 
-def _get_pipeline_commit():
-    if PYANNOTE_PIPELINE_COMMIT:
-        return PYANNOTE_PIPELINE_COMMIT
-    # symlink から推定
-    try:
-        real = Path(PYANNOTE_SYMLINK).resolve()
-        return real.name if len(real.name) == 40 else ""
-    except Exception:
-        return ""
+# --- モデル読み込みロジック ---
 
 def load_diarization_pipeline():
+    """
+    ビルド時に生成された設定ファイルから、決定論的に
+    pyannoteパイプラインを読み込む。
+    フォールバックロジックは不要。
+    """
     from pyannote.audio import Pipeline
-    repo_id = "pyannote/speaker-diarization-3.1"
-    commit = _get_pipeline_commit()
-    if commit:
-        _debug(f"Using pipeline commit: {commit}")
-        try:
-            return Pipeline.from_pretrained(
-                repo_id,
-                revision=commit,
-                use_auth_token=HF_TOKEN or False,
-                local_files_only=True  # ネット完全遮断
-            )
-        except Exception as e:
-            _debug(f"Commit-specific local load failed: {e}")
-    # ここまでで失敗したら従来 offline main
-    try:
-        _debug("Offline load attempt (main)")
-        return Pipeline.from_pretrained(repo_id, use_auth_token=False)
-    except (LocalEntryNotFoundError, OfflineModeIsEnabled) as e:
-        _debug(f"Offline(main) failed: {e}")
-        if not HF_TOKEN:
-            raise RuntimeError("Offline cache missing and HF_TOKEN not set for fallback.")
-        _debug("Online fallback with token...")
-        os.environ["HF_HUB_OFFLINE"] = "0"
-        p = Pipeline.from_pretrained(repo_id, use_auth_token=HF_TOKEN)
-        os.environ["HF_HUB_OFFLINE"] = "1"
-        return p
+    print(f"[Init] Load Pyannote pipeline from config: {DIARIZATION_CONFIG_PATH}")
+    if not Path(DIARIZATION_CONFIG_PATH).exists():
+        raise FileNotFoundError(f"Diarization config not found at {DIARIZATION_CONFIG_PATH}. The Docker image may be built incorrectly.")
+    
+    return Pipeline.from_pretrained(DIARIZATION_CONFIG_PATH)
 
 def ensure_models_loaded():
+    """
+    WhisperとDiarizationモデルがロードされていることを確認する。
+    """
     global _whisper_model, _diarization_pipeline
     if _whisper_model is None:
         from faster_whisper import WhisperModel
@@ -188,9 +148,13 @@ def ensure_models_loaded():
         else:
             print(f"[Init] Local Whisper not found, fetching by name: {WHISPER_MODEL_NAME}")
             _whisper_model = WhisperModel(WHISPER_MODEL_NAME, device=DEVICE, compute_type=COMPUTE_TYPE)
+    
     if _diarization_pipeline is None:
+        # 簡素化された読み込み関数を呼び出す
         _diarization_pipeline = load_diarization_pipeline()
         _diarization_pipeline.to(torch.device(DEVICE))
+
+# --- RunPodハンドラ ---
 
 def handler(job):
     try:
@@ -214,15 +178,19 @@ def handler(job):
         except Exception as e:
             os.unlink(tmp_path)
             return {"error": f"音声読み込み失敗: {e}"}
+        finally:
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
 
         print("[Job] Diarization...")
         diarization_result = _diarization_pipeline({"waveform": waveform, "sample_rate": sample_rate})
 
         print("[Job] Transcription...")
+        # torchaudioでロードしたwaveformを直接渡すことで一時ファイルを再利用しない
         segments_iter, info = _whisper_model.transcribe(
-            tmp_path,
+            waveform.squeeze(0).numpy(),
             beam_size=5,
-            language=language if language and language.lower() != "none" else None,
+            language=language if language and language.lower()!= "none" else None,
             vad_filter=True,
             vad_parameters=dict(min_silence_duration_ms=250),
             word_timestamps=True,
@@ -255,6 +223,11 @@ def handler(job):
             "segments": final
         }
     except Exception as e:
-        return {"error": f"処理中に例外: {e}"}
+        import traceback
+        print(f"Error during job execution: {e}")
+        traceback.print_exc()
+        return {"error": f"処理中に例外が発生しました: {e}"}
 
-runpod.serverless.start({"handler": handler})
+# --- サーバー起動 ---
+if __name__ == "__main__":
+    runpod.serverless.start({"handler": handler})
