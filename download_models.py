@@ -1,50 +1,121 @@
 """
-ビルド時モデルベイク（オンライン）:
- - pyannote/speaker-diarization, pyannote/segmentation, speechbrain/spkrec-ecapa-voxceleb
- - ローカル用 config.yml (Speech-Diarization のオフライン設定) を生成
+ビルド時モデルベイキング:
+ - Systran/faster-whisper-large-v2
+ - pyannote/speaker-diarization-3.1 とその依存モデル
+ - 実行時用の、ローカルパスに解決済みの diarization_config.yaml を生成
 """
-import os, shutil, sys, yaml
-from pathlib import Path
-from huggingface_hub import snapshot_download
 
+import os
+import shutil
+from pathlib import Path
+from huggingface_hub import snapshot_download, hf_hub_download
+import yaml
+import sys
+
+# --- 環境変数とパス設定 ---
 HF_TOKEN = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
 if not HF_TOKEN:
-    raise SystemExit("ERROR: HF_TOKEN is required.")
+    raise SystemExit("ERROR: HF_TOKEN is required to bake models.")
 
+# hf_cacheはダウンロード時のみに使用
 hf_cache = Path(os.environ.get("HUGGINGFACE_HUB_CACHE", "/app/hf_home/hub"))
+# 全てのモデルをこの単一のディレクトリに集約
 models_root = Path("/app/models")
+whisper_target = models_root / "whisper-large-v2"
+
+# --- ディレクトリ作成 ---
 models_root.mkdir(parents=True, exist_ok=True)
 hf_cache.mkdir(parents=True, exist_ok=True)
 
-seg_dir = models_root / "segmentation"
-emb_dir = models_root / "spkrec-ecapa-voxceleb"
-config_out = Path("/app/diarization_config.yml")
+# --- モデル格納先パス (コンテナ内での最終的な絶対パス) ---
+# これらのパスは、書き換え後のconfig.yamlに埋め込まれる
+pyannote_segmentation_target = models_root / "pyannote" / "segmentation-3.0"
+pyannote_embedding_target    = models_root / "speechbrain" / "spkrec-ecapa-voxceleb"
+config_output_path = Path("/app/diarization_config.yaml")
 
-def dl(repo_id, target, desc):
-    path = Path(snapshot_download(repo_id=repo_id, use_auth_token=HF_TOKEN, cache_dir=str(hf_cache)))
-    if target.exists(): shutil.rmtree(target)
-    shutil.copytree(path, target)
-    return target
+# --- ヘルパー関数 ---
+def assert_exists(path: Path, desc: str):
+    """パスが存在することを確認するヘルパー"""
+    if not path.exists():
+        print(f" Missing {desc}: {path}", file=sys.stderr)
+        raise SystemExit(1)
 
-seg_model = dl("pyannote/segmentation-3.0", seg_dir, "segmentation")
-emb_model = dl("speechbrain/spkrec-ecapa-voxceleb", emb_dir, "embedding")
+def copy_model_from_cache(repo_id: str, target_dir: Path, desc: str, revision: str = None):
+    """指定されたrepoをダウンロードし、キャッシュからターゲットディレクトリにコピーする"""
+    print(f" Downloading {desc} ({repo_id})...")
+    try:
+        snapshot_path_str = snapshot_download(
+            repo_id=repo_id,
+            use_auth_token=HF_TOKEN,
+            cache_dir=str(hf_cache),
+            revision=revision,
+            # ローカルファイルのみを使用する設定は、キャッシュが存在する場合にのみ有効
+            # ここでは常にダウンロードを試みる
+            local_files_only=False, 
+        )
+    except Exception as e:
+        print(f"Failed to download {repo_id}: {e}", file=sys.stderr)
+        raise SystemExit(1)
+        
+    snapshot_path = Path(snapshot_path_str)
+    
+    print(f" Copying {desc} from {snapshot_path} to {target_dir}...")
+    if target_dir.exists():
+        shutil.rmtree(target_dir)
+    shutil.copytree(snapshot_path, target_dir)
+    print(f" {desc} copied successfully.")
+    return target_dir
 
-config = {
-    "pipeline": {
-        "name": "pyannote.audio.pipelines.SpeakerDiarization",
-        "params": {
-            "segmentation": str(seg_model),
-            "embedding": str(emb_model),
-            "clustering": "AgglomerativeClustering",
-            "embedding_exclude_overlap": True
-        }
-    },
-    "params": {
-        "segmentation": {"min_duration_off": 0.0},
-        "clustering": {"method": "centroid", "min_cluster_size": 15}
-    }
-}
+# --- Whisperモデルのダウンロードとコピー ---
+copy_model_from_cache(
+    repo_id="Systran/faster-whisper-large-v2",
+    target_dir=whisper_target,
+    desc="Whisper model"
+)
+assert_exists(whisper_target / "config.json", "whisper config.json")
 
-with open(config_out, "w") as f:
-    yaml.dump(config, f, sort_keys=False)
-print(f"Generated offline config at {config_out}")
+# --- Pyannoteモデルのダウンロードとコピー ---
+print("\nDownloading and copying pyannote models...")
+segmentation_model_path = copy_model_from_cache(
+    repo_id="pyannote/segmentation-3.0",
+    target_dir=pyannote_segmentation_target,
+    desc="Pyannote segmentation model"
+)
+embedding_model_path = copy_model_from_cache(
+    repo_id="speechbrain/spkrec-ecapa-voxceleb",
+    target_dir=pyannote_embedding_target,
+    desc="Pyannote embedding model"
+)
+
+# --- diarization_config.yaml の生成 ---
+print(f"\nGenerating configuration file at {config_output_path}...")
+
+# 1. まずは公式のconfig.yamlをテンプレートとしてダウンロード
+print("Downloading official pyannote/speaker-diarization-3.1 config.yaml...")
+try:
+    config_template_path = hf_hub_download(
+        repo_id="pyannote/speaker-diarization-3.1",
+        filename="config.yaml",
+        use_auth_token=HF_TOKEN,
+        cache_dir=str(hf_cache),
+    )
+except Exception as e:
+    print(f"Failed to download config.yaml for pyannote/speaker-diarization-3.1: {e}", file=sys.stderr)
+    raise SystemExit(1)
+
+# 2. テンプレートを読み込む
+with open(config_template_path, "r") as f:
+    config_data = yaml.safe_load(f)
+
+# 3. モデルへのパスを、コンテナ内の絶対パスに書き換える
+print("Rewriting model paths in config.yaml for offline use...")
+config_data["pipeline"]["params"]["segmentation"] = str(segmentation_model_path)
+config_data["pipeline"]["params"]["embedding"] = str(embedding_model_path)
+
+# 4. 書き換えた設定を最終的な出力ファイルに保存する
+with open(config_output_path, "w") as f:
+    yaml.dump(config_data, f, sort_keys=False, default_flow_style=False)
+
+assert_exists(config_output_path, "Generated diarization config")
+print("Configuration file generated successfully.")
+print("\nAll models baked successfully into /app/models.")
