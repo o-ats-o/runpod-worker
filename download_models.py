@@ -22,13 +22,17 @@ hf_cache = Path(os.environ.get("HUGGINGFACE_HUB_CACHE", "/app/hf_home/hub"))
 # 全てのモデルをこの単一のディレクトリに集約
 models_root = Path("/app/models")
 whisper_target = models_root / "whisper-large-v2"
-pyannote_segmentation_target = models_root / "pyannote-segmentation-3.0"
-pyannote_embedding_target = models_root / "pyannote-embedding-ecapa"
-config_output_path = Path("/app/diarization_config.yaml")
 
 # --- ディレクトリ作成 ---
+(models_root / "pyannote").mkdir(parents=True, exist_ok=True)
+(models_root / "speechbrain").mkdir(parents=True, exist_ok=True)
 models_root.mkdir(parents=True, exist_ok=True)
 hf_cache.mkdir(parents=True, exist_ok=True)
+
+# --- モデル格納先パス ---
+pyannote_segmentation_target = models_root / "pyannote" / "segmentation-3.0"
+pyannote_embedding_target   = models_root / "speechbrain" / "spkrec-ecapa-voxceleb"
+config_output_path = Path("/app/diarization_config.yaml")
 
 
 # --- ヘルパー関数 ---
@@ -44,8 +48,6 @@ def copy_model_from_cache(repo_id: str, target_dir: Path, desc: str):
         repo_id=repo_id,
         use_auth_token=HF_TOKEN,
         cache_dir=str(hf_cache),
-        # allow_patternsを使用して不要なファイルをダウンロードしないようにする（オプション）
-        # 例: allow_patterns=["*.bin", "*.json", "*.txt"]
     )
     snapshot_path = Path(snapshot_path_str)
     
@@ -55,6 +57,7 @@ def copy_model_from_cache(repo_id: str, target_dir: Path, desc: str):
     shutil.copytree(snapshot_path, target_dir)
     print(f" {desc} copied successfully.")
     return target_dir
+
 
 # --- Whisperモデルのダウンロードとコピー ---
 copy_model_from_cache(
@@ -67,7 +70,6 @@ assert_exists(whisper_target / "config.json", "whisper config.json")
 
 # --- Pyannoteモデルのダウンロードとコピー ---
 print(" Downloading and copying pyannote models...")
-# パイプライン自体のファイルは不要なため、依存モデルのみを直接取得・コピー
 segmentation_model_path = copy_model_from_cache(
     repo_id="pyannote/segmentation-3.0",
     target_dir=pyannote_segmentation_target,
@@ -79,15 +81,14 @@ embedding_model_path = copy_model_from_cache(
     desc="Pyannote embedding model"
 )
 
+
 # --- diarization_config.yaml の生成 ---
-# ここが重要：キャッシュの絶対パスではなく、イメージ内の固定パスを使用
 print(f" Generating configuration file at {config_output_path}...")
 
 config_data = {
     "pipeline": {
         "name": "pyannote.audio.pipelines.SpeakerDiarization",
         "params": {
-            # 最終イメージ内の整理されたパスを指定
             "segmentation": str(segmentation_model_path),
             "embedding": str(embedding_model_path),
             "clustering": "AgglomerativeClustering",

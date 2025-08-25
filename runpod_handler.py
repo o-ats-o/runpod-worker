@@ -119,15 +119,33 @@ def smooth_labels(segments: List[Dict[str, Any]], merge_short_threshold: float, 
 def load_diarization_pipeline():
     """
     ビルド時に生成された設定ファイルから、決定論的に
-    pyannoteパイプラインを読み込む。
+    pyannoteのSpeakerDiarizationパイプラインを読み込む。
+    HF Hubには一切アクセスしない。
     """
-    from pyannote.audio import Pipeline
-    print(f"[Init] Load Pyannote pipeline from config: {DIARIZATION_CONFIG_PATH}")
-    if not Path(DIARIZATION_CONFIG_PATH).exists():
-        raise FileNotFoundError(f"Diarization config not found at {DIARIZATION_CONFIG_PATH}. The Docker image may be built incorrectly.")
-    
-    # from_pretrainedは、YAMLファイル内のパス（/app/models/...）を直接読み込んでくれる
-    return Pipeline.from_pretrained(DIARIZATION_CONFIG_PATH)
+    import yaml
+    from pyannote.audio.pipelines import SpeakerDiarization
+
+    print(f"[Init] Load Pyannote pipeline (offline) from config: {DIARIZATION_CONFIG_PATH}")
+    cfg_path = Path(DIARIZATION_CONFIG_PATH)
+    if not cfg_path.exists():
+        raise FileNotFoundError(
+            f"Diarization config not found at {DIARIZATION_CONFIG_PATH}. "
+            "The Docker image may be built incorrectly."
+        )
+
+    with open(cfg_path, "r") as f:
+        config = yaml.safe_load(f)
+
+    # YAMLからパラメータを展開して初期化
+    pipeline = SpeakerDiarization(
+        segmentation=config["pipeline"]["params"]["segmentation"],
+        embedding=config["pipeline"]["params"]["embedding"],
+        clustering=config["pipeline"]["params"]["clustering"],
+        embedding_exclude_overlap=config["pipeline"]["params"].get("embedding_exclude_overlap", True),
+    )
+    # ハイパーパラメータの適用
+    pipeline.instantiate(config.get("params", {}))
+    return pipeline
 
 def ensure_models_loaded():
     """
