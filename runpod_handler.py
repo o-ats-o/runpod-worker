@@ -117,38 +117,27 @@ def smooth_labels(segments: List[Dict[str, Any]], merge_short_threshold: float, 
 # --- モデル読み込みロジック ---
 
 def load_diarization_pipeline():
-    """
-    ビルド時に生成された設定ファイルからローカルモデルをロード。
-    Hugging Face Hub は使わない。
-    """
     import yaml
     from pyannote.audio.pipelines import SpeakerDiarization
     from pyannote.audio.core.model import Model
 
-    print(f"[Init] Load Pyannote pipeline (offline) from {DIARIZATION_CONFIG_PATH}")
-    cfg_path = Path(DIARIZATION_CONFIG_PATH)
-    if not cfg_path.exists():
-        raise FileNotFoundError(f"Diarization config not found at {DIARIZATION_CONFIG_PATH}.")
+    print(f"[Init] Loading offline diarization pipeline from {DIARIZATION_CONFIG_PATH}")
+    cfg = yaml.safe_load(Path(DIARIZATION_CONFIG_PATH).read_text())
 
-    with open(cfg_path, "r") as f:
-        config = yaml.safe_load(f)
+    seg_path = cfg["pipeline"]["params"]["segmentation"]
+    emb_path = cfg["pipeline"]["params"]["embedding"]
 
-    seg_path = config["pipeline"]["params"]["segmentation"]
-    emb_path = config["pipeline"]["params"]["embedding"]
-
-    # モデルをローカルパスからロード
-    seg_model = Model.from_pretrained(seg_path)
-    emb_model = Model.from_pretrained(emb_path)
+    seg = Model.from_pretrained(seg_path)
+    emb = Model.from_pretrained(emb_path)
 
     pipeline = SpeakerDiarization(
-        segmentation=seg_model,
-        embedding=emb_model,
-        clustering=config["pipeline"]["params"]["clustering"],
-        embedding_exclude_overlap=config["pipeline"]["params"].get("embedding_exclude_overlap", True),
+        segmentation=seg,
+        embedding=emb,
+        clustering=cfg["pipeline"]["params"]["clustering"],
+        embedding_exclude_overlap=cfg["pipeline"]["params"].get("embedding_exclude_overlap", True),
     )
-    pipeline.instantiate(config.get("params", {}))
+    pipeline.instantiate(cfg.get("params", {}))
     return pipeline
-
 def ensure_models_loaded():
     """
     WhisperとDiarizationモデルがロードされていることを確認する。
