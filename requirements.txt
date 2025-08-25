@@ -10,4 +10,4 @@ packaging<25.0
 tqdm
 runpod
 huggingface_hub
-pyyaml  
+pyyaml
