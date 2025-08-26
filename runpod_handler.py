@@ -122,7 +122,7 @@ def load_diarization_pipeline():
     pyannoteのSpeakerDiarizationパイプラインを決定論的に読み込む。
     この関数はHF Hubには一切アクセスしない。
     """
-    from pyannote.audio import Pipeline  # 変更: SpeakerDiarizationの直接インポートは不要
+    from pyannote.audio import Pipeline
 
     print(f"[Init] Load Pyannote pipeline (offline) from config: {DIARIZATION_CONFIG_PATH}")
     cfg_path = Path(DIARIZATION_CONFIG_PATH)
@@ -132,11 +132,11 @@ def load_diarization_pipeline():
             "The Docker image may be built incorrectly."
         )
 
-    # Pipeline.from_pretrainedにローカルのYAMLパスを渡すだけで、
-    # ライブラリが内部的に全てのコンポーネントを正しく読み込んでくれる。
-    pipeline = Pipeline.from_pretrained(cfg_path)
+    # use_auth_token=False を明示してオフライン動作を保証
+    pipeline = Pipeline.from_pretrained(cfg_path, use_auth_token=False)
     
     return pipeline
+
 
 def ensure_models_loaded():
     """
