@@ -72,7 +72,7 @@ def find_model_file(directory: Path) -> Path:
             "Cannot determine which one to use."
         )
     
-    model_file = found_files
+    model_file = found_files[0]
     print(f"  - Found model checkpoint: {model_file}")
     return model_file
 
