@@ -11,6 +11,7 @@ from pathlib import Path
 from huggingface_hub import snapshot_download, hf_hub_download
 import yaml
 import sys
+from typing import List
 
 # --- 環境変数とパス設定 ---
 HF_TOKEN = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
@@ -40,6 +41,33 @@ def assert_exists(path: Path, desc: str):
         print(f" Missing {desc}: {path}", file=sys.stderr)
         raise SystemExit(1)
 
+def find_model_file(directory: Path) -> Path:
+    """
+    指定されたディレクトリ内から主要なモデルファイルを見つけ出す。
+    堅牢なオフライン設定を生成するために不可欠。
+    """
+    # 探索するモデルファイルの優先順位リスト
+    possible_filenames = ["pytorch_model.bin", "model.ckpt", "model.safetensors"]
+    found_files = []
+    for filename in possible_filenames:
+        file_path = directory / filename
+        if file_path.is_file():
+            found_files.append(file_path)
+    
+    if not found_files:
+        raise FileNotFoundError(
+            f"No model checkpoint file found in {directory}. "
+            f"Searched for: {', '.join(possible_filenames)}"
+        )
+    if len(found_files) > 1:
+        raise ValueError(
+            f"Multiple potential model files found in {directory}: {found_files}. "
+            "Cannot determine which one to use."
+        )
+    
+    print(f"  - Found model checkpoint: {found_files}")
+    return found_files
+
 def copy_model_from_cache(repo_id: str, target_dir: Path, desc: str, revision: str = None):
     """指定されたrepoをダウンロードし、キャッシュからターゲットディレクトリにコピーする"""
     print(f" Downloading {desc} ({repo_id})...")
@@ -49,9 +77,7 @@ def copy_model_from_cache(repo_id: str, target_dir: Path, desc: str, revision: s
             use_auth_token=HF_TOKEN,
             cache_dir=str(hf_cache),
             revision=revision,
-            # ローカルファイルのみを使用する設定は、キャッシュが存在する場合にのみ有効
-            # ここでは常にダウンロードを試みる
-            local_files_only=False, 
+            local_files_only=False,
         )
     except Exception as e:
         print(f"Failed to download {repo_id}: {e}", file=sys.stderr)
@@ -107,10 +133,14 @@ except Exception as e:
 with open(config_template_path, "r") as f:
     config_data = yaml.safe_load(f)
 
-# 3. モデルへのパスを、コンテナ内の絶対パスに書き換える
+# 3. モデルへのパスを、コンテナ内の絶対パス（ファイルレベル）に書き換える
 print("Rewriting model paths in config.yaml for offline use...")
-config_data["pipeline"]["params"]["segmentation"] = str(segmentation_model_path)
-config_data["pipeline"]["params"]["embedding"] = str(embedding_model_path)
+# ヘルパー関数を使い、モデルファイルへの直接パスを取得
+segmentation_checkpoint = find_model_file(segmentation_model_path)
+embedding_checkpoint = find_model_file(embedding_model_path)
+
+config_data["pipeline"]["params"]["segmentation"] = str(segmentation_checkpoint)
+config_data["pipeline"]["params"]["embedding"] = str(embedding_checkpoint)
 
 # 4. 書き換えた設定を最終的な出力ファイルに保存する
 with open(config_output_path, "w") as f:
