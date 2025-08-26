@@ -47,13 +47,12 @@ def copy_model_from_cache(repo_id: str, target_dir: Path, desc: str, revision: s
             cache_dir=str(hf_cache),
             revision=revision,
             local_files_only=False,
-        )
+        ) 
     except Exception as e:
         print(f"Failed to download {repo_id}: {e}", file=sys.stderr)
         raise SystemExit(1)
         
     snapshot_path = Path(snapshot_path_str)
-    
     print(f" Copying {desc} from {snapshot_path} to {target_dir}...")
     if target_dir.exists():
         shutil.rmtree(target_dir)
