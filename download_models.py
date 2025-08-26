@@ -46,8 +46,13 @@ def find_model_file(directory: Path) -> Path:
     指定されたディレクトリ内から主要なモデルファイルを見つけ出す。
     堅牢なオフライン設定を生成するために不可欠。
     """
-    # 探索するモデルファイルの優先順位リスト
-    possible_filenames = ["pytorch_model.bin", "model.ckpt", "model.safetensors"]
+    # 探索するモデルファイルの優先順位リストを拡張
+    possible_filenames = [
+        "pytorch_model.bin", 
+        "embedding_model.ckpt",
+        "model.ckpt", 
+        "model.safetensors"
+    ]
     found_files = []
     for filename in possible_filenames:
         file_path = directory / filename
@@ -60,13 +65,16 @@ def find_model_file(directory: Path) -> Path:
             f"Searched for: {', '.join(possible_filenames)}"
         )
     if len(found_files) > 1:
+        # 複数の候補が見つかった場合、より具体的な名前を優先するなどのロジックも可能だが、
+        # 現状ではエラーとしてビルドを停止させるのが最も安全
         raise ValueError(
-            f"Multiple potential model files found in {directory}: {found_files}. "
+            f"Multiple potential model files found in {directory}: {[str(f) for f in found_files]}. "
             "Cannot determine which one to use."
         )
     
-    print(f"  - Found model checkpoint: {found_files}")
-    return found_files
+    model_file = found_files
+    print(f"  - Found model checkpoint: {model_file}")
+    return model_file
 
 def copy_model_from_cache(repo_id: str, target_dir: Path, desc: str, revision: str = None):
     """指定されたrepoをダウンロードし、キャッシュからターゲットディレクトリにコピーする"""
@@ -116,7 +124,7 @@ embedding_model_path = copy_model_from_cache(
 # --- diarization_config.yaml の生成 ---
 print(f"\nGenerating configuration file at {config_output_path}...")
 
-# 1. まずは公式のconfig.yamlをテンプレートとしてダウンロード
+# 1. 公式のconfig.yamlをテンプレートとしてダウンロード
 print("Downloading official pyannote/speaker-diarization-3.1 config.yaml...")
 try:
     config_template_path = hf_hub_download(
@@ -135,7 +143,7 @@ with open(config_template_path, "r") as f:
 
 # 3. モデルへのパスを、コンテナ内の絶対パス（ファイルレベル）に書き換える
 print("Rewriting model paths in config.yaml for offline use...")
-# ヘルパー関数を使い、モデルファイルへの直接パスを取得
+# 修正されたヘルパー関数を使い、モデルファイルへの直接パスを取得
 segmentation_checkpoint = find_model_file(segmentation_model_path)
 embedding_checkpoint = find_model_file(embedding_model_path)
 
