@@ -101,7 +101,7 @@ def rewrite_speechbrain_hyperparams(model_dir: Path):
             
             if absolute_path.exists():
                 # 値を絶対パスの文字列に書き換え
-                setattr(hyperparams['pretrainer'].paths, key, str(absolute_path))
+                hyperparams['pretrainer'].paths[key] = str(absolute_path)
                 print(f"    - '{key}': '{str(absolute_path)}'")
             else:
                 print(f"    - WARNING: Could not find file for '{key}' at '{absolute_path}'. Skipping.")
