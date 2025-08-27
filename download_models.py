@@ -12,6 +12,7 @@ from pathlib import Path
 from huggingface_hub import snapshot_download, hf_hub_download
 import yaml
 import sys
+from speechbrain.yaml import load_extended_yaml
 
 # --- 環境変数とパス設定 ---
 HF_TOKEN = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
@@ -38,7 +39,7 @@ def assert_exists(path: Path, desc: str):
         raise SystemExit(1)
 
 def find_model_file(directory: Path) -> Path:
-    possible_filenames = ["pytorch_model.bin", "embedding_model.ckpt", "model.ckpt", "model.safetensors"]
+    possible_filenames = ["pytorch_model.bin", "embedding_model.ckpt", "model.ckpt", "model.safensors"]
     found_files = []
     for filename in possible_filenames:
         file_path = directory / filename
@@ -57,13 +58,7 @@ def find_model_file(directory: Path) -> Path:
 def copy_model_from_cache(repo_id: str, target_dir: Path, desc: str, revision: str = None):
     print(f" Downloading {desc} ({repo_id})...")
     try:
-        snapshot_path_str = snapshot_download(
-            repo_id=repo_id,
-            use_auth_token=HF_TOKEN,
-            cache_dir=str(hf_cache),
-            revision=revision,
-            local_files_only=False,
-        )
+        snapshot_path_str = snapshot_download(repo_id=repo_id, use_auth_token=HF_TOKEN, cache_dir=str(hf_cache), revision=revision, local_files_only=False)
     except Exception as e:
         print(f"Failed to download {repo_id}: {e}", file=sys.stderr)
         raise SystemExit(1)
@@ -86,13 +81,15 @@ def rewrite_speechbrain_hyperparams(model_dir: Path):
         return
 
     print(f"Rewriting hyperparams.yaml for offline use in {model_dir}...")
-    with open(hyperparams_path, 'r') as f:
-        hyperparams = yaml.safe_load(f)
+    # speechbrainの拡張YAMLローダーを使用してファイルを読み込む
+    with open(hyperparams_path) as f:
+        hyperparams = load_extended_yaml(f)
 
     # pretrained_pathを現在のディレクトリの絶対パスに書き換える
     hyperparams['pretrained_path'] = str(model_dir)
 
     with open(hyperparams_path, 'w') as f:
+        # 標準のyaml.dumpで書き戻す
         yaml.dump(hyperparams, f, sort_keys=False, default_flow_style=False)
     
     print("hyperparams.yaml rewritten successfully.")
@@ -112,12 +109,7 @@ rewrite_speechbrain_hyperparams(embedding_model_path)
 # --- diarization_config.yaml の生成 ---
 print(f"\nGenerating configuration file at {config_output_path}...")
 try:
-    config_template_path = hf_hub_download(
-        repo_id="pyannote/speaker-diarization-3.1",
-        filename="config.yaml",
-        use_auth_token=HF_TOKEN,
-        cache_dir=str(hf_cache),
-    )
+    config_template_path = hf_hub_download(repo_id="pyannote/speaker-diarization-3.1", filename="config.yaml", use_auth_token=HF_TOKEN, cache_dir=str(hf_cache))
 except Exception as e:
     print(f"Failed to download config.yaml for pyannote/speaker-diarization-3.1: {e}", file=sys.stderr)
     raise SystemExit(1)
