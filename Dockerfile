@@ -10,8 +10,8 @@ ARG FORCE_MODEL_REFRESH=false
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=off \
-    HF_HOME=/app/hf_home \
-    HUGGINGFACE_HUB_CACHE=/app/hf_home/hub
+    HF_HOME=/app/cache \
+    HUGGINGFACE_HUB_CACHE=/app/cache/hub
 
 WORKDIR /app
 
@@ -51,8 +51,8 @@ FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=off \
-    # オフラインモードを強制 (キャッシュは存在しないが念のため設定)
     HF_HUB_OFFLINE=1 \
+    HF_HOME=/app/cache \
     WHISPER_LOCAL_DIR=/app/models/whisper-large-v2
 
 WORKDIR /app

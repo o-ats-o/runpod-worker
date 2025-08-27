@@ -7,8 +7,18 @@ import torchaudio
 from typing import List, Dict, Any, Optional
 import runpod
 from pathlib import Path
+import logging
+
+# --- デバッグログ設定を追加 ---
+# 全てのライブラリからのログをDEBUGレベルで表示する
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+# --------------------------
 
 # --- 警告フィルタ ---
+warnings.filterwarnings("ignore", module="pyannote.audio.utils.reproducibility")
 warnings.filterwarnings("ignore", module="pyannote.audio.utils.reproducibility")
 warnings.filterwarnings("ignore", module="pyannote.audio.models.blocks.pooling")
 warnings.filterwarnings("ignore", category=UserWarning)
