@@ -9,8 +9,7 @@ import runpod
 from pathlib import Path
 import logging
 
-# --- デバッグログ設定を追加 ---
-# 全てのライブラリからのログをDEBUGレベルで表示する
+# --- デバッグログ設定 ---
 logging.basicConfig(
     level=logging.DEBUG,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -18,7 +17,6 @@ logging.basicConfig(
 # --------------------------
 
 # --- 警告フィルタ ---
-warnings.filterwarnings("ignore", module="pyannote.audio.utils.reproducibility")
 warnings.filterwarnings("ignore", module="pyannote.audio.utils.reproducibility")
 warnings.filterwarnings("ignore", module="pyannote.audio.models.blocks.pooling")
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -29,11 +27,8 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 DEFAULT_LANGUAGE = os.environ.get("DEFAULT_TRANSCRIBE_LANG", "ja")
 HF_TOKEN = os.environ.get("HUGGING_FACE_HUB_TOKEN") or os.environ.get("HF_TOKEN")
 WHISPER_LOCAL_DIR = os.environ.get("WHISPER_LOCAL_DIR", "/app/models/whisper-large-v2")
-# ---------------------------------------------
 WHISPER_MODEL_NAME = os.environ.get("WHISPER_MODEL_NAME", "large-v2")
 COMPUTE_TYPE = os.environ.get("WHISPER_COMPUTE_TYPE", "float16" if DEVICE == "cuda" else "int8")
-
-# ビルド時に生成される設定ファイルのパス
 DIARIZATION_CONFIG_PATH = "/app/diarization_config.yaml"
 
 # PyTorchパフォーマンス設定
@@ -44,7 +39,6 @@ torch.backends.cudnn.allow_tf32 = True
 _whisper_model = None
 _diarization_pipeline = None
 
-# ... (format_timestamp, _segment_durationなどのヘルパー関数は変更なし)...
 def format_timestamp(seconds: float) -> str:
     ms = round(seconds * 1000)
     h = ms // 3_600_000
@@ -128,22 +122,21 @@ def smooth_labels(segments: List[Dict[str, Any]], merge_short_threshold: float, 
 
 def load_diarization_pipeline():
     """
-    ビルド時に生成された、ローカルパス解決済みの設定ファイルから、
-    pyannoteのSpeakerDiarizationパイプラインを決定論的に読み込む。
-    この関数はHF Hubには一切アクセスしない。
+    pyannoteのSpeakerDiarizationパイプラインを読み込み、即座にGPUへ転送する。
     """
     from pyannote.audio import Pipeline
 
-    print(f"[Init] Load Pyannote pipeline (offline) from config: {DIARIZATION_CONFIG_PATH}")
+    print(f"--- 1. Starting to load Pyannote pipeline from config: {DIARIZATION_CONFIG_PATH} ---")
     cfg_path = Path(DIARIZATION_CONFIG_PATH)
     if not cfg_path.exists():
-        raise FileNotFoundError(
-            f"Diarization config not found at {DIARIZATION_CONFIG_PATH}. "
-            "The Docker image may be built incorrectly."
-        )
+        raise FileNotFoundError(f"Diarization config not found at {DIARIZATION_CONFIG_PATH}.")
 
-    # use_auth_token=False を明示してオフライン動作を保証
+    # パイプラインをインスタンス化
     pipeline = Pipeline.from_pretrained(cfg_path, use_auth_token=False)
+    print("--- 2. Pyannote pipeline object created successfully. ---")
+
+    pipeline.to(torch.device(DEVICE))
+    print(f"--- 3. Pyannote pipeline moved to device: {DEVICE} ---")
     
     return pipeline
 
@@ -155,15 +148,15 @@ def ensure_models_loaded():
     global _whisper_model, _diarization_pipeline
     if _whisper_model is None:
         from faster_whisper import WhisperModel
+        print("--- Loading Whisper model... ---")
         if os.path.isdir(WHISPER_LOCAL_DIR):
-            print(f"[Init] Load Whisper local: {WHISPER_LOCAL_DIR}")
             _whisper_model = WhisperModel(WHISPER_LOCAL_DIR, device=DEVICE, compute_type=COMPUTE_TYPE)
+            print("--- Whisper model loaded successfully. ---")
         else:
-            raise FileNotFoundError(f"Whisper model directory not found at {WHISPER_LOCAL_DIR}. The Docker image may be built incorrectly.")
+            raise FileNotFoundError(f"Whisper model directory not found at {WHISPER_LOCAL_DIR}.")
     
     if _diarization_pipeline is None:
         _diarization_pipeline = load_diarization_pipeline()
-        _diarization_pipeline.to(torch.device(DEVICE))
 
 # --- RunPodハンドラ ---
 def handler(job):
