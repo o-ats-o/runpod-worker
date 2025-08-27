@@ -73,20 +73,47 @@ def copy_model_from_cache(repo_id: str, target_dir: Path, desc: str, revision: s
 def rewrite_speechbrain_hyperparams(model_dir: Path):
     """
     speechbrainモデルのhyperparams.yamlをオフライン用に書き換える。
-    'pretrained_path'を、このファイルからの相対パスに修正する。
+    pretrainerが参照する全てのパスを、コンテナ内の絶対パスに明示的に修正し、
+    曖昧な参照(!ref)を排除する。
     """
     hyperparams_path = model_dir / "hyperparams.yaml"
     if not hyperparams_path.is_file():
         print(f"Warning: hyperparams.yaml not found in {model_dir}. Skipping rewrite.")
         return
 
-    print(f"Rewriting hyperparams.yaml for offline use in {model_dir}...")
+    print(f"Rewriting hyperparams.yaml for robust offline use in {model_dir}...")
     with open(hyperparams_path) as f:
-        hyperparams = load_hyperpyyaml(f)
+        # NOTE: load_hyperpyyamlではなく、参照解決を行わないyaml.safe_loadを使用する
+        hyperparams = yaml.safe_load(f)
 
-    hyperparams['pretrained_path'] = '.'
+    # pretrainerセクションが存在し、その中にpathsセクションがあることを確認
+    if 'pretrainer' in hyperparams and isinstance(hyperparams.get('pretrainer'), dict) and 'paths' in hyperparams['pretrainer']:
+        paths_to_rewrite = hyperparams['pretrainer']['paths']
+        
+        print("  - Rewriting paths in 'pretrainer' section...")
+        for key, value in paths_to_rewrite.items():
+            # 元の値からファイル名のみを抽出
+            original_filename = Path(str(value)).name
+            # コンテナ内の絶対パスを構築
+            absolute_path = model_dir / original_filename
+            
+            # 絶対パスが存在することを確認
+            if absolute_path.exists():
+                # 値を絶対パスの文字列に書き換え
+                hyperparams['pretrainer']['paths'][key] = str(absolute_path)
+                print(f"    - '{key}': '{str(absolute_path)}'")
+            else:
+                print(f"    - WARNING: Could not find file for '{key}' at '{absolute_path}'. Skipping.")
+    else:
+        print("  - 'pretrainer' or 'paths' section not found. Skipping path rewrite.")
+
+    # 不要になったpretrained_path変数を削除
+    if 'pretrained_path' in hyperparams:
+        del hyperparams['pretrained_path']
+        print("  - Removed 'pretrained_path' variable.")
 
     with open(hyperparams_path, 'w') as f:
+        # HyperPyYAMLの特殊なタグを保持せず、プレーンなYAMLとして書き出す
         yaml.dump(hyperparams, f, sort_keys=False, default_flow_style=False)
     
     print("hyperparams.yaml rewritten successfully.")
