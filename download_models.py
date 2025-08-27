@@ -73,7 +73,7 @@ def copy_model_from_cache(repo_id: str, target_dir: Path, desc: str, revision: s
 def rewrite_speechbrain_hyperparams(model_dir: Path):
     """
     speechbrainモデルのhyperparams.yamlをオフライン用に書き換える。
-    'pretrained_path'をコンテナ内の絶対パスに修正する。
+    'pretrained_path'を、このファイルからの相対パスに修正する。
     """
     hyperparams_path = model_dir / "hyperparams.yaml"
     if not hyperparams_path.is_file():
@@ -84,7 +84,7 @@ def rewrite_speechbrain_hyperparams(model_dir: Path):
     with open(hyperparams_path) as f:
         hyperparams = load_hyperpyyaml(f)
 
-    hyperparams['pretrained_path'] = str(model_dir)
+    hyperparams['pretrained_path'] = '.'
 
     with open(hyperparams_path, 'w') as f:
         yaml.dump(hyperparams, f, sort_keys=False, default_flow_style=False)
