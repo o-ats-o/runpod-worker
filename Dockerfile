@@ -3,7 +3,7 @@
 # このステージでは、ビルドに必要なツールをインストールし、
 # Python依存関係を導入し、モデルをダウンロードします。
 # =====================================================================
-FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04 AS builder
+FROM nvidia/cuda:12.4.1-cudnn9-runtime-ubuntu22.04 AS builder
 
 ARG FORCE_MODEL_REFRESH=false
 
@@ -46,7 +46,7 @@ RUN --mount=type=secret,id=hf_token \
 # このステージでは、builderステージから必要なアーティファクトのみを
 # コピーし、軽量でセキュアなランタイムイメージを作成します。
 # =====================================================================
-FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
+FROM nvidia/cuda:12.4.1-cudnn9-runtime-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
