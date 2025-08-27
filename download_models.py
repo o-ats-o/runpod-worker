@@ -2,6 +2,7 @@
 ビルド時モデルベイキング:
  - Systran/faster-whisper-large-v2
  - pyannote/speaker-diarization-3.1 とその依存モデル
+ - speechbrain/spkrec-ecapa-voxceleb
  - 実行時用の、ローカルパスに解決済みの diarization_config.yaml を生成
 """
 
@@ -27,9 +28,9 @@ whisper_target = models_root / "whisper-large-v2"
 models_root.mkdir(parents=True, exist_ok=True)
 hf_cache.mkdir(parents=True, exist_ok=True)
 
-# --- モデル格納先パス (コンテナ内での最終的な絶対パス) ---
+# --- モデル格納先パス ---
 pyannote_segmentation_target = models_root / "pyannote" / "segmentation-3.0"
-pyannote_embedding_target    = models_root / "speechbrain" / "spkrec-ecapa-voxceleb"
+speechbrain_embedding_target = models_root / "speechbrain" / "spkrec-ecapa-voxceleb"
 config_output_path = Path("/app/diarization_config.yaml")
 
 # --- ヘルパー関数 ---
@@ -43,7 +44,7 @@ def copy_model_from_cache(repo_id: str, target_dir: Path, desc: str, revision: s
     try:
         snapshot_path_str = snapshot_download(
             repo_id=repo_id,
-            use_auth_token=HF_TOKEN,
+            token=HF_TOKEN,
             cache_dir=str(hf_cache),
             revision=revision,
             local_files_only=False, 
@@ -68,8 +69,8 @@ copy_model_from_cache(
 )
 assert_exists(whisper_target / "config.json", "whisper config.json")
 
-# --- Pyannoteモデルのダウンロードとコピー ---
-print("\nDownloading and copying pyannote models...")
+# --- Pyannote + Speechbrain モデルのダウンロードとコピー ---
+print("\nDownloading and copying diarization dependency models...")
 segmentation_model_path = copy_model_from_cache(
     repo_id="pyannote/segmentation-3.0",
     target_dir=pyannote_segmentation_target,
@@ -77,8 +78,8 @@ segmentation_model_path = copy_model_from_cache(
 )
 embedding_model_path = copy_model_from_cache(
     repo_id="speechbrain/spkrec-ecapa-voxceleb",
-    target_dir=pyannote_embedding_target,
-    desc="Pyannote embedding model"
+    target_dir=speechbrain_embedding_target,
+    desc="Speechbrain embedding model"
 )
 
 # --- diarization_config.yaml の生成 ---
@@ -88,7 +89,7 @@ try:
     config_template_path = hf_hub_download(
         repo_id="pyannote/speaker-diarization-3.1",
         filename="config.yaml",
-        use_auth_token=HF_TOKEN,
+        token=HF_TOKEN,
         cache_dir=str(hf_cache),
     )
 except Exception as e:
@@ -101,8 +102,8 @@ with open(config_template_path, "r") as f:
 print("Rewriting model paths in config.yaml for offline use...")
 # segmentation は pytorch_model.bin ファイルを直接指す
 config_data["pipeline"]["params"]["segmentation"] = str(segmentation_model_path / "pytorch_model.bin")
-# embedding は公開モデルIDのまま
-config_data["pipeline"]["params"]["embedding"] = "speechbrain/spkrec-ecapa-voxceleb"
+# embedding もローカルの Speechbrain モデルを指す
+config_data["pipeline"]["params"]["embedding"] = str(embedding_model_path)
 
 with open(config_output_path, "w") as f:
     yaml.dump(config_data, f, sort_keys=False, default_flow_style=False)
