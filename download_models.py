@@ -116,10 +116,12 @@ assert_exists(whisper_target / "config.json", "whisper config.json")
 # --- Pyannoteモデル ---
 print("\nDownloading and copying pyannote models...")
 segmentation_model_path = copy_model_from_cache(repo_id="pyannote/segmentation-3.0", target_dir=pyannote_segmentation_target, desc="Pyannote segmentation model")
-embedding_model_path = copy_model_from_cache(repo_id="speechbrain/spkrec-ecapa-voxceleb", target_dir=pyannote_embedding_target, desc="Pyannote embedding model")
+
+embedding_repo_id = "speechbrain/spkrec-ecapa-voxceleb"
+embedding_model_path = copy_model_from_cache(repo_id=embedding_repo_id, target_dir=pyannote_embedding_target, desc="Pyannote embedding model")
 
 # --- SpeechBrainモデルの設定をオフライン用に修正 ---
-rewrite_speechbrain_hyperparams(embedding_model_path)
+rewrite_speechbrain_hyperparams(embedding_model_path, embedding_repo_id)
 
 # --- diarization_config.yaml の生成 ---
 print(f"\nGenerating configuration file at {config_output_path}...")
