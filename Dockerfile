@@ -52,7 +52,10 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=off \
     HF_HUB_OFFLINE=1 \
+    # huggingface系のライブラリが参照するキャッシュパス
     HF_HOME=/app/models \
+    # pyannote.audioが独自に参照するキャッシュパス
+    PYANNOTE_CACHE=/app/models \
     WHISPER_LOCAL_DIR=/app/models/whisper-large-v2
 
 WORKDIR /app
