@@ -73,8 +73,9 @@ def copy_model_from_cache(repo_id: str, target_dir: Path, desc: str, revision: s
 def rewrite_speechbrain_hyperparams(model_dir: Path):
     """
     speechbrainモデルのhyperparams.yamlをオフライン用に書き換える。
-    pretrainerが参照する全てのパスを、コンテナ内の絶対パスに明示的に修正し、
-    曖昧な参照(!ref)を排除する。
+    1. `load_hyperpyyaml`で特殊タグを解決しながら読み込む。
+    2. `pretrainer`が参照する全てのパスを、コンテナ内の絶対パスに明示的に上書きする。
+    3. 不要になったキーを削除し、プレーンなYAMLとして保存する。
     """
     hyperparams_path = model_dir / "hyperparams.yaml"
     if not hyperparams_path.is_file():
@@ -82,41 +83,56 @@ def rewrite_speechbrain_hyperparams(model_dir: Path):
         return
 
     print(f"Rewriting hyperparams.yaml for robust offline use in {model_dir}...")
+    
+    # 1. `load_hyperpyyaml` を使用して、!new や!ref などのカスタムタグを正しく解釈・解決する
     with open(hyperparams_path) as f:
-        # NOTE: load_hyperpyyamlではなく、参照解決を行わないyaml.safe_loadを使用する
-        hyperparams = yaml.safe_load(f)
+        hyperparams = load_hyperpyyaml(f)
 
-    # pretrainerセクションが存在し、その中にpathsセクションがあることを確認
-    if 'pretrainer' in hyperparams and isinstance(hyperparams.get('pretrainer'), dict) and 'paths' in hyperparams['pretrainer']:
-        paths_to_rewrite = hyperparams['pretrainer']['paths']
+    # 2. pretrainerセクション内のパスをコンテナ内の絶対パスに上書きする
+    if 'pretrainer' in hyperparams and hasattr(hyperparams['pretrainer'], 'paths'):
+        paths_to_rewrite = hyperparams['pretrainer'].paths
         
-        print("  - Rewriting paths in 'pretrainer' section...")
-        for key, value in paths_to_rewrite.items():
-            # 元の値からファイル名のみを抽出
-            original_filename = Path(str(value)).name
+        print("  - Rewriting paths in 'pretrainer' section to absolute paths...")
+        for key, original_path in paths_to_rewrite.items():
+            # 元のパスからファイル名のみを抽出
+            original_filename = Path(str(original_path)).name
             # コンテナ内の絶対パスを構築
             absolute_path = model_dir / original_filename
             
-            # 絶対パスが存在することを確認
             if absolute_path.exists():
                 # 値を絶対パスの文字列に書き換え
-                hyperparams['pretrainer']['paths'][key] = str(absolute_path)
+                setattr(hyperparams['pretrainer'].paths, key, str(absolute_path))
                 print(f"    - '{key}': '{str(absolute_path)}'")
             else:
                 print(f"    - WARNING: Could not find file for '{key}' at '{absolute_path}'. Skipping.")
     else:
         print("  - 'pretrainer' or 'paths' section not found. Skipping path rewrite.")
 
-    # 不要になったpretrained_path変数を削除
+    # 3. 不要になったpretrained_path変数を削除 (存在すれば)
     if 'pretrained_path' in hyperparams:
         del hyperparams['pretrained_path']
         print("  - Removed 'pretrained_path' variable.")
 
+    # 4. 解決済みのプレーンな辞書としてYAMLファイルに書き戻す
+    #    `hyperpyyaml.dump`ではなく、標準の`yaml.dump`を使い、特殊タグを書き出さないようにする
     with open(hyperparams_path, 'w') as f:
-        # HyperPyYAMLの特殊なタグを保持せず、プレーンなYAMLとして書き出す
-        yaml.dump(hyperparams, f, sort_keys=False, default_flow_style=False)
+        # `vars()` を使ってオブジェクトを辞書に変換してからダンプする
+        # ただし、単純なオブジェクトではない可能性があるため、安全な変換処理を実装する
+        
+        # HyperPyYAMLのオブジェクトをプレーンな辞書に変換するヘルパー関数
+        def to_plain_dict(obj):
+            if isinstance(obj, dict):
+                return {k: to_plain_dict(v) for k, v in obj.items()}
+            if hasattr(obj, '__dict__'):
+                return {k: to_plain_dict(v) for k, v in vars(obj).items() if not k.startswith('_')}
+            if isinstance(obj, list):
+                return [to_plain_dict(i) for i in obj]
+            return obj
+
+        plain_hyperparams = to_plain_dict(hyperparams)
+        yaml.dump(plain_hyperparams, f, sort_keys=False, default_flow_style=False)
     
-    print("hyperparams.yaml rewritten successfully.")
+    print("hyperparams.yaml rewritten successfully as a plain YAML file.")
 
 # --- Whisperモデル ---
 copy_model_from_cache(repo_id="Systran/faster-whisper-large-v2", target_dir=whisper_target, desc="Whisper model")
