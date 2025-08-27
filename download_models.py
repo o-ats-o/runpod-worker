@@ -12,7 +12,7 @@ from pathlib import Path
 from huggingface_hub import snapshot_download, hf_hub_download
 import yaml
 import sys
-from speechbrain.yaml import load_extended_yaml
+from hyperpyyaml import load_hyperpyyaml
 
 # --- 環境変数とパス設定 ---
 HF_TOKEN = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
@@ -81,15 +81,12 @@ def rewrite_speechbrain_hyperparams(model_dir: Path):
         return
 
     print(f"Rewriting hyperparams.yaml for offline use in {model_dir}...")
-    # speechbrainの拡張YAMLローダーを使用してファイルを読み込む
     with open(hyperparams_path) as f:
-        hyperparams = load_extended_yaml(f)
+        hyperparams = load_hyperpyyaml(f)
 
-    # pretrained_pathを現在のディレクトリの絶対パスに書き換える
     hyperparams['pretrained_path'] = str(model_dir)
 
     with open(hyperparams_path, 'w') as f:
-        # 標準のyaml.dumpで書き戻す
         yaml.dump(hyperparams, f, sort_keys=False, default_flow_style=False)
     
     print("hyperparams.yaml rewritten successfully.")
