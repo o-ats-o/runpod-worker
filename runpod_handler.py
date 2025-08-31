@@ -47,9 +47,9 @@ def init_s3_client():
     """環境変数からR2の認証情報を読み込み、S3クライアントを初期化する"""
     global _s3_client
     try:
-        account_id = os.environ
-        access_key_id = os.environ
-        secret_access_key = os.environ
+        account_id = os.environ["R2_ACCOUNT_ID"]
+        access_key_id = os.environ["R2_ACCESS_KEY_ID"]
+        secret_access_key = os.environ["R2_SECRET_ACCESS_KEY"]
         
         _s3_client = boto3.client(
             's3',
@@ -61,6 +61,9 @@ def init_s3_client():
         logging.info("Cloudflare R2 client initialized successfully.")
     except KeyError as e:
         logging.error(f"R2の環境変数が設定されていません: {e}")
+        _s3_client = None
+    except Exception as e:
+        logging.error(f"R2クライアントの初期化に失敗しました: {e}")
         _s3_client = None
         
 # --- モデル読み込みロジック ---
@@ -193,7 +196,7 @@ def handler(job):
         if not object_key:
             return {"error": "入力に 'object_key' がありません。"}
 
-        bucket_name = os.environ
+        bucket_name = os.environ["R2_BUCKET_NAME"]
 
         # パラメータの取得
         language = params.get("language", DEFAULT_LANGUAGE)
