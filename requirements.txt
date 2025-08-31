@@ -11,3 +11,4 @@ tqdm
 runpod
 huggingface_hub
 pyyaml
+boto3

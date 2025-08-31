@@ -1,5 +1,4 @@
 import os
-import base64
 import tempfile
 import warnings
 import torch
@@ -8,10 +7,13 @@ from typing import List, Dict, Any, Optional
 import runpod
 from pathlib import Path
 import logging
+import boto3
+from botocore.client import Config
+from botocore.exceptions import ClientError
 
 # --- デバッグログ設定 ---
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 # --------------------------
@@ -38,7 +40,55 @@ torch.backends.cudnn.allow_tf32 = True
 # --- グローバルモデル変数 ---
 _whisper_model = None
 _diarization_pipeline = None
+_s3_client = None
 
+# --- R2クライアント初期化関数 ---
+def init_s3_client():
+    """環境変数からR2の認証情報を読み込み、S3クライアントを初期化する"""
+    global _s3_client
+    try:
+        account_id = os.environ
+        access_key_id = os.environ
+        secret_access_key = os.environ
+        
+        _s3_client = boto3.client(
+            's3',
+            endpoint_url=f'https://{account_id}.r2.cloudflarestorage.com',
+            aws_access_key_id=access_key_id,
+            aws_secret_access_key=secret_access_key,
+            config=Config(signature_version='s3v4') # R2との互換性のために必要
+        )
+        logging.info("Cloudflare R2 client initialized successfully.")
+    except KeyError as e:
+        logging.error(f"R2の環境変数が設定されていません: {e}")
+        _s3_client = None
+        
+# --- モデル読み込みロジック ---
+def ensure_models_loaded():
+    """WhisperとDiarizationモデルがロードされていることを確認する"""
+    global _whisper_model, _diarization_pipeline
+    if _whisper_model is None:
+        from faster_whisper import WhisperModel
+        logging.info("--- Loading Whisper model... ---")
+        if os.path.isdir(WHISPER_LOCAL_DIR):
+            _whisper_model = WhisperModel(WHISPER_LOCAL_DIR, device=DEVICE, compute_type=COMPUTE_TYPE)
+            logging.info("--- Whisper model loaded successfully. ---")
+        else:
+            raise FileNotFoundError(f"Whisper model directory not found at {WHISPER_LOCAL_DIR}.")
+    
+    if _diarization_pipeline is None:
+        from pyannote.audio import Pipeline
+        logging.info(f"--- 1. Starting to load Pyannote pipeline from config: {DIARIZATION_CONFIG_PATH} ---")
+        cfg_path = Path(DIARIZATION_CONFIG_PATH)
+        if not cfg_path.exists():
+            raise FileNotFoundError(f"Diarization config not found at {DIARIZATION_CONFIG_PATH}.")
+        _diarization_pipeline = Pipeline.from_pretrained(cfg_path, use_auth_token=False)
+        logging.info("--- 2. Pyannote pipeline object created successfully. ---")
+        _diarization_pipeline.to(torch.device(DEVICE))
+        logging.info(f"--- 3. Pyannote pipeline moved to device: {DEVICE} ---")
+
+
+# --- フォーマット関数 ---
 def format_timestamp(seconds: float) -> str:
     ms = round(seconds * 1000)
     h = ms // 3_600_000
@@ -72,12 +122,14 @@ def _compute_overlap_ratio(s0: float, s1: float, t0: float, t1: float) -> float:
     ov = min(s1, t1) - max(s0, t0)
     if ov <= 0: return 0.0
     return ov / length
+
 def best_speaker_for_interval(start: float, end: float, diarization_result, threshold: float) -> str:
     best, best_ratio = "UNKNOWN_SPEAKER", 0.0
     for turn, _, spk in diarization_result.itertracks(yield_label=True):
         ratio = _compute_overlap_ratio(start, end, turn.start, turn.end)
         if ratio > best_ratio: best_ratio, best = ratio, spk
     return best if best_ratio >= threshold else "UNKNOWN_SPEAKER"
+
 def max_overlap_speaker(start: float, end: float, diarization_result, prev: Optional[str]) -> str:
     best, best_ov = "UNKNOWN_SPEAKER", 0.0
     for turn, _, spk in diarization_result.itertracks(yield_label=True):
@@ -85,6 +137,7 @@ def max_overlap_speaker(start: float, end: float, diarization_result, prev: Opti
         if ov > best_ov: best_ov, best = ov, spk
     if best == "UNKNOWN_SPEAKER" and prev and prev!= "UNKNOWN_SPEAKER": return prev
     return best
+
 def determine_speaker(segment, diarization_result, prev: str, overlap_ratio_threshold: float) -> str:
     words = getattr(segment, "words", None)
     if not words: return max_overlap_speaker(segment.start, segment.end, diarization_result, prev)
@@ -96,6 +149,7 @@ def determine_speaker(segment, diarization_result, prev: str, overlap_ratio_thre
         if spk!= "UNKNOWN_SPEAKER": votes[spk] = votes.get(spk, 0.0) + (we - ws)
     if not votes: return prev if prev and prev!= "UNKNOWN_SPEAKER" else max_overlap_speaker(segment.start, segment.end, diarization_result, prev)
     return max(list(votes.items()), key=lambda kv: kv[1])[0]
+
 def smooth_labels(segments: List[Dict[str, Any]], merge_short_threshold: float, hold: float) -> List[Dict[str, Any]]:
     if not segments:
         return []
@@ -118,77 +172,59 @@ def smooth_labels(segments: List[Dict[str, Any]], merge_short_threshold: float, 
     segs = _merge_adjacent_same_speaker(segs)
     return segs
 
-# --- モデル読み込みロジック ---
-
-def load_diarization_pipeline():
-    """
-    pyannoteのSpeakerDiarizationパイプラインを読み込み、即座にGPUへ転送する。
-    """
-    from pyannote.audio import Pipeline
-
-    print(f"--- 1. Starting to load Pyannote pipeline from config: {DIARIZATION_CONFIG_PATH} ---")
-    cfg_path = Path(DIARIZATION_CONFIG_PATH)
-    if not cfg_path.exists():
-        raise FileNotFoundError(f"Diarization config not found at {DIARIZATION_CONFIG_PATH}.")
-
-    # パイプラインをインスタンス化
-    pipeline = Pipeline.from_pretrained(cfg_path, use_auth_token=False)
-    print("--- 2. Pyannote pipeline object created successfully. ---")
-
-    pipeline.to(torch.device(DEVICE))
-    print(f"--- 3. Pyannote pipeline moved to device: {DEVICE} ---")
-    
-    return pipeline
-
-
-def ensure_models_loaded():
-    """
-    WhisperとDiarizationモデルがロードされていることを確認する。
-    """
-    global _whisper_model, _diarization_pipeline
-    if _whisper_model is None:
-        from faster_whisper import WhisperModel
-        print("--- Loading Whisper model... ---")
-        if os.path.isdir(WHISPER_LOCAL_DIR):
-            _whisper_model = WhisperModel(WHISPER_LOCAL_DIR, device=DEVICE, compute_type=COMPUTE_TYPE)
-            print("--- Whisper model loaded successfully. ---")
-        else:
-            raise FileNotFoundError(f"Whisper model directory not found at {WHISPER_LOCAL_DIR}.")
-    
-    if _diarization_pipeline is None:
-        _diarization_pipeline = load_diarization_pipeline()
-
 # --- RunPodハンドラ ---
 def handler(job):
+    """
+    RunPod Serverlessのエントリーポイント。
+    R2から音声ファイルをダウンロードし、文字起こしと話者分離を実行する。
+    """
     try:
+        # モデルとS3クライアントが初期化されていることを確認
         ensure_models_loaded()
-        params = job.get("input", {}) if isinstance(job, dict) else {}
-        b64 = params.get("audio_base64")
-        if not b64:
-            return {"error": "audio_base64 がありません。"}
+        if _s3_client is None:
+            init_s3_client()
+            if _s3_client is None:
+                return {"error": "R2クライアントの初期化に失敗しました。環境変数を確認してください。"}
 
+        params = job.get("input", {})
+        
+        # R2のオブジェクトキーを受け取る
+        object_key = params.get("object_key")
+        if not object_key:
+            return {"error": "入力に 'object_key' がありません。"}
+
+        bucket_name = os.environ
+
+        # パラメータの取得
         language = params.get("language", DEFAULT_LANGUAGE)
         overlap_ratio_threshold = float(params.get("overlap_ratio_threshold", 0.3))
         merge_short_threshold = float(params.get("merge_short_segment_threshold", 0.5))
         speaker_hold_time = float(params.get("speaker_hold_time", 0.8))
 
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
-            tmp.write(base64.b64decode(b64))
+        # R2からファイルをダウンロードするための一時ファイルを作成
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
             tmp_path = tmp.name
+        
+        try:
+            logging.info(f"[Job] Downloading audio from R2: s3://{bucket_name}/{object_key}...")
+            _s3_client.download_file(bucket_name, object_key, tmp_path)
+            logging.info(f"[Job] Audio downloaded to {tmp_path}")
+        except ClientError as e:
+            logging.error(f"R2からのダウンロードに失敗しました: {e}")
+            return {"error": f"R2からのダウンロードに失敗しました: {e.response['Error']['Message']}"}
 
         try:
             waveform, sample_rate = torchaudio.load(tmp_path)
         except Exception as e:
-            os.unlink(tmp_path)
-            return {"error": f"音声読み込み失敗: {e}"}
+            return {"error": f"音声ファイルの読み込みに失敗しました: {e}"}
         finally:
             if os.path.exists(tmp_path):
                 os.unlink(tmp_path)
 
-        print("[Job] Diarization...")
+        logging.info("[Job] Diarization...")
         diarization_result = _diarization_pipeline({"waveform": waveform, "sample_rate": sample_rate})
 
-        print("[Job] Transcription...")
+        logging.info("[Job] Transcription...")
         segments_iter, info = _whisper_model.transcribe(
             waveform.squeeze(0).numpy(),
             beam_size=5,
@@ -199,7 +235,7 @@ def handler(job):
         )
         segments = list(segments_iter)
 
-        print("[Job] Combine + speaker assignment...")
+        logging.info("[Job] Combine + speaker assignment...")
         combined = []
         prev = "UNKNOWN_SPEAKER"
         for seg in segments:
@@ -217,7 +253,7 @@ def handler(job):
             "speaker": s["speaker"],
             "start_time": format_timestamp(s["start"]),
             "end_time": format_timestamp(s["end"]),
-            "text": s.get("text","")
+            "text": s.get("text", "")
         } for s in smoothed]
 
         return {
@@ -226,11 +262,14 @@ def handler(job):
         }
     except Exception as e:
         import traceback
-        print(f"Error during job execution: {e}")
+        logging.error(f"Error during job execution: {e}")
         traceback.print_exc()
-        return {"error": f"処理中に例外が発生しました: {e}"}
+        return {"error": f"処理中に予期せぬ例外が発生しました: {e}"}
 
 
 # --- サーバー起動 ---
 if __name__ == "__main__":
+    # ワーカー起動時にモデルとクライアントを初期化
+    init_s3_client()
+    ensure_models_loaded()
     runpod.serverless.start({"handler": handler})
