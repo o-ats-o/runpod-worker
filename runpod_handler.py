@@ -105,6 +105,23 @@ def format_timestamp(seconds: float, always_include_hours: bool = False) -> str:
     else:
         return f"{m:02d}:{s:02d},{ms:03d}"
 
+def preprocess_audio_to_mono_16k(waveform: torch.Tensor, sample_rate: int, target_rate: int = 16000):
+    """
+    入力の `waveform` (C x T または T) をモノラル・target_rate(既定16kHz) に変換して返す。
+    戻り値は (T,), sample_rate。
+    """
+    # チャンネル次元を確実に持たせる
+    if waveform.dim() == 1:
+        waveform = waveform.unsqueeze(0)
+    # 複数チャネルは平均でモノラル化
+    if waveform.size(0) > 1:
+        waveform = waveform.mean(dim=0, keepdim=True)
+    # サンプリングレート変換
+    if sample_rate != target_rate:
+        waveform = torchaudio.functional.resample(waveform, orig_freq=sample_rate, new_freq=target_rate)
+        sample_rate = target_rate
+    return waveform.squeeze(0), sample_rate
+
 def _segment_duration(seg: Dict[str, Any]) -> float:
     return float(seg["end"]) - float(seg["start"])
 
@@ -234,7 +251,11 @@ def handler(job):
 
         try:
             waveform, sample_rate = torchaudio.load(tmp_path)
-            audio_duration = waveform.shape[1] / sample_rate
+            orig_channels = waveform.shape[0] if waveform.dim() == 2 else 1
+            # 前処理: モノラル・16kHzへ変換
+            proc_waveform, proc_sample_rate = preprocess_audio_to_mono_16k(waveform, sample_rate, target_rate=16000)
+            audio_duration = proc_waveform.shape[0] / proc_sample_rate
+            logging.info(f"[Job] Audio loaded. orig_sr={sample_rate}, orig_channels={orig_channels}, proc_sr={proc_sample_rate}, duration_sec={audio_duration:.2f}")
         except Exception as e:
             return {"error": f"音声ファイルの読み込みに失敗しました: {e}"}
         finally:
@@ -242,7 +263,7 @@ def handler(job):
                 os.unlink(tmp_path)
 
         logging.info("[Job] Diarization...")
-        diarization_input = {"waveform": waveform, "sample_rate": sample_rate}
+        diarization_input = {"waveform": proc_waveform.unsqueeze(0), "sample_rate": proc_sample_rate}
         # オプションの話者数パラメータを受け取りパイプラインに渡す
         if params.get("num_speakers") is not None:
             diarization_input["num_speakers"] = int(params["num_speakers"])
@@ -253,15 +274,32 @@ def handler(job):
         diarization_result = _diarization_pipeline(diarization_input)
 
         logging.info("[Job] Transcription...")
+        use_vad = bool(params.get("use_vad", True))
+        min_silence_ms = int(params.get("min_silence_duration_ms", 250))
+        audio_np = proc_waveform.numpy()
         segments_iter, info = _whisper_model.transcribe(
-            waveform.squeeze(0).numpy(),
+            audio_np,
             beam_size=5,
             language=language if language and language.lower()!= "none" else None,
-            vad_filter=True,
-            vad_parameters=dict(min_silence_duration_ms=250),
+            vad_filter=use_vad,
+            vad_parameters=dict(min_silence_duration_ms=min_silence_ms),
             word_timestamps=True,
         )
         segments = list(segments_iter)
+        logging.info(f"[Job] Transcription segments (with VAD={use_vad}, silence_ms={min_silence_ms}): {len(segments)}")
+
+        # VAD有効でセグメントが0の場合、VAD無しで再試行
+        if len(segments) == 0 and use_vad:
+            logging.warning("[Job] No segments detected with VAD. Retrying without VAD...")
+            segments_iter, info = _whisper_model.transcribe(
+                audio_np,
+                beam_size=5,
+                language=language if language and language.lower()!= "none" else None,
+                vad_filter=False,
+                word_timestamps=True,
+            )
+            segments = list(segments_iter)
+            logging.info(f"[Job] Transcription segments after retry (VAD=False): {len(segments)}")
 
         logging.info("[Job] Combine + speaker assignment...")
         combined = []
