@@ -92,7 +92,7 @@ def ensure_models_loaded():
 
 
 # --- フォーマット関数 ---
-def format_timestamp(seconds: float) -> str:
+def format_timestamp(seconds: float, always_include_hours: bool = False) -> str:
     ms = round(seconds * 1000)
     h = ms // 3_600_000
     ms %= 3_600_000
@@ -100,7 +100,10 @@ def format_timestamp(seconds: float) -> str:
     ms %= 60_000
     s = ms // 1000
     ms %= 1000
-    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+    if always_include_hours or h > 0:
+        return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+    else:
+        return f"{m:02d}:{s:02d},{ms:03d}"
 
 def _segment_duration(seg: Dict[str, Any]) -> float:
     return float(seg["end"]) - float(seg["start"])
@@ -143,14 +146,20 @@ def max_overlap_speaker(start: float, end: float, diarization_result, prev: Opti
 
 def determine_speaker(segment, diarization_result, prev: str, overlap_ratio_threshold: float) -> str:
     words = getattr(segment, "words", None)
-    if not words: return max_overlap_speaker(segment.start, segment.end, diarization_result, prev)
+    if not words:
+        if prev and prev != "UNKNOWN_SPEAKER":
+            return prev
+        return max_overlap_speaker(segment.start, segment.end, diarization_result, prev)
     votes = {}
     for w in words:
         ws, we = getattr(w, "start", None), getattr(w, "end", None)
-        if ws is None or we is None or we <= ws: continue
+        if ws is None or we is None or we <= ws:
+            continue
         spk = best_speaker_for_interval(ws, we, diarization_result, overlap_ratio_threshold)
-        if spk!= "UNKNOWN_SPEAKER": votes[spk] = votes.get(spk, 0.0) + (we - ws)
-    if not votes: return prev if prev and prev!= "UNKNOWN_SPEAKER" else max_overlap_speaker(segment.start, segment.end, diarization_result, prev)
+        if spk != "UNKNOWN_SPEAKER":
+            votes[spk] = votes.get(spk, 0.0) + (we - ws)
+    if not votes:
+        return prev if prev and prev != "UNKNOWN_SPEAKER" else max_overlap_speaker(segment.start, segment.end, diarization_result, prev)
     return max(list(votes.items()), key=lambda kv: kv[1])[0]
 
 def smooth_labels(segments: List[Dict[str, Any]], merge_short_threshold: float, hold: float) -> List[Dict[str, Any]]:
@@ -166,12 +175,19 @@ def smooth_labels(segments: List[Dict[str, Any]], merge_short_threshold: float, 
             else:
                 prev = cur["speaker"]
     if merge_short_threshold > 0 and len(segs) >= 3:
-        for i in range(1, len(segs)-1):
-            left, cur, right = segs[i-1], segs[i], segs[i+1]
+        for i in range(1, len(segs) - 1):
+            left, cur, right = segs[i - 1], segs[i], segs[i + 1]
             if (cur["speaker"] != left["speaker"] and cur["speaker"] != right["speaker"] and
-                _segment_duration(cur) < merge_short_threshold and
-                left["speaker"] == right["speaker"] and left["speaker"] != "UNKNOWN_SPEAKER"):
-                cur["speaker"] = left["speaker"]
+                _segment_duration(cur) < merge_short_threshold):
+                if left["speaker"] == right["speaker"] and left["speaker"] != "UNKNOWN_SPEAKER":
+                    cur["speaker"] = left["speaker"]
+                else:
+                    left_dur = _segment_duration(left) if left["speaker"] != "UNKNOWN_SPEAKER" else -1.0
+                    right_dur = _segment_duration(right) if right["speaker"] != "UNKNOWN_SPEAKER" else -1.0
+                    if left_dur >= right_dur and left_dur >= 0:
+                        cur["speaker"] = left["speaker"]
+                    elif right_dur > left_dur and right_dur >= 0:
+                        cur["speaker"] = right["speaker"]
     segs = _merge_adjacent_same_speaker(segs)
     return segs
 
@@ -218,6 +234,7 @@ def handler(job):
 
         try:
             waveform, sample_rate = torchaudio.load(tmp_path)
+            audio_duration = waveform.shape[1] / sample_rate
         except Exception as e:
             return {"error": f"音声ファイルの読み込みに失敗しました: {e}"}
         finally:
@@ -225,7 +242,15 @@ def handler(job):
                 os.unlink(tmp_path)
 
         logging.info("[Job] Diarization...")
-        diarization_result = _diarization_pipeline({"waveform": waveform, "sample_rate": sample_rate})
+        diarization_input = {"waveform": waveform, "sample_rate": sample_rate}
+        # オプションの話者数パラメータを受け取りパイプラインに渡す
+        if params.get("num_speakers") is not None:
+            diarization_input["num_speakers"] = int(params["num_speakers"])
+        if params.get("min_speakers") is not None:
+            diarization_input["min_speakers"] = int(params["min_speakers"])
+        if params.get("max_speakers") is not None:
+            diarization_input["max_speakers"] = int(params["max_speakers"])
+        diarization_result = _diarization_pipeline(diarization_input)
 
         logging.info("[Job] Transcription...")
         segments_iter, info = _whisper_model.transcribe(
@@ -242,6 +267,9 @@ def handler(job):
         combined = []
         prev = "UNKNOWN_SPEAKER"
         for seg in segments:
+            if getattr(seg, "start", 0.0) > audio_duration:
+                logging.warning(f"Skipping segment beyond audio duration: start={seg.start:.2f}s > {audio_duration:.2f}s")
+                continue
             spk = determine_speaker(seg, diarization_result, prev, overlap_ratio_threshold)
             combined.append({
                 "speaker": spk,
