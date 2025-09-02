@@ -208,46 +208,6 @@ def smooth_labels(segments: List[Dict[str, Any]], merge_short_threshold: float, 
     segs = _merge_adjacent_same_speaker(segs)
     return segs
 
-# --- GPU VAD: ダイアライゼーションから音声区間を抽出 ---
-def extract_speech_intervals_from_diarization(diarization_result, min_gap: float, max_end: float) -> List[Dict[str, float]]:
-    """
-    pyannoteの話者ターンを統合し、音声アクティビティ区間のリストを返す。
-    min_gap 以下の隙間は結合する。
-    """
-    turns = []
-    for turn, _, _ in diarization_result.itertracks(yield_label=True):
-        s = max(0.0, float(turn.start))
-        e = float(turn.end)
-        if max_end is not None:
-            e = min(e, max_end)
-        if e > s:
-            turns.append((s, e))
-    if not turns:
-        return []
-    turns.sort(key=lambda x: x[0])
-    merged = []
-    cur_s, cur_e = turns[0]
-    for s, e in turns[1:]:
-        if s - cur_e <= min_gap:  # 近接・短隙間は連結
-            cur_e = max(cur_e, e)
-        else:
-            merged.append({"start": cur_s, "end": cur_e})
-            cur_s, cur_e = s, e
-    merged.append({"start": cur_s, "end": cur_e})
-    return merged
-
-class _TmpWord:
-    def __init__(self, start: float, end: float):
-        self.start = start
-        self.end = end
-
-class _TmpSegment:
-    def __init__(self, start: float, end: float, text: str, words: Optional[List[_TmpWord]]):
-        self.start = start
-        self.end = end
-        self.text = text
-        self.words = words or []
-
 # --- RunPodハンドラ ---
 def handler(job):
     """
@@ -314,106 +274,46 @@ def handler(job):
         diarization_result = _diarization_pipeline(diarization_input)
 
         logging.info("[Job] Transcription...")
-        audio_np = proc_waveform.numpy()
-        vad_mode = str(params.get("vad_mode", "builtin")).lower()  # builtin | gpu
+        use_vad = bool(params.get("use_vad", True))
         min_silence_ms = int(params.get("min_silence_duration_ms", 250))
-        if vad_mode == "gpu":
-            # ダイアライゼーション結果から音声区間を抽出し、その区間ごとにWhisperを実行
-            min_gap_sec = max(0.0, float(min_silence_ms) / 1000.0)
-            intervals = extract_speech_intervals_from_diarization(diarization_result, min_gap=min_gap_sec, max_end=audio_duration)
-            logging.info(f"[Job] GPU VAD intervals: {len(intervals)} (min_gap={min_gap_sec:.3f}s)")
-            if len(intervals) == 0:
-                logging.warning("[Job] No intervals from GPU VAD. Falling back to single-chunk transcription without VAD...")
-                seg_iter, info = _whisper_model.transcribe(
-                    audio_np,
-                    beam_size=5,
-                    language=language if language and language.lower()!= "none" else None,
-                    vad_filter=False,
-                    word_timestamps=True,
-                )
-                segments = list(seg_iter)
-                logging.info(f"[Job] Fallback segments (VAD=False): {len(segments)}")
-            else:
-                collected_segments = []
-                info = None
-                for iv in intervals:
-                    s_sec = max(0.0, float(iv["start"]))
-                    e_sec = min(audio_duration, float(iv["end"]))
-                    if e_sec <= s_sec:
-                        continue
-                    s_idx = int(round(s_sec * proc_sample_rate))
-                    e_idx = int(round(e_sec * proc_sample_rate))
-                    chunk = audio_np[s_idx:e_idx]
-                    if chunk.size == 0:
-                        continue
-                    seg_iter, info_local = _whisper_model.transcribe(
-                        chunk,
-                        beam_size=5,
-                        language=language if language and language.lower()!= "none" else None,
-                        vad_filter=False,
-                        word_timestamps=True,
-                    )
-                    info = info or info_local
-                    for seg in seg_iter:
-                        # 時刻を元音声のオフセットに合わせて補正
-                        offset = s_sec
-                        adj_start = float(seg.start) + offset
-                        adj_end = float(seg.end) + offset
-                        # 単語も補正
-                        words = []
-                        if getattr(seg, "words", None):
-                            for w in seg.words:
-                                ws = getattr(w, "start", None)
-                                we = getattr(w, "end", None)
-                                if ws is None or we is None:
-                                    continue
-                                words.append(_TmpWord(float(ws) + offset, float(we) + offset))
-                        collected_segments.append(_TmpSegment(adj_start, adj_end, seg.text.strip(), words))
-                # Whisperの内蔵VADを使わなかったので、そのまま使用
-                segments = collected_segments
-                logging.info(f"[Job] Transcription segments (GPU VAD, merged intervals={len(intervals)}): {len(segments)}")
-        else:
-            # 従来のWhisper内蔵VADを利用
-            use_vad = bool(params.get("use_vad", True))
+        audio_np = proc_waveform.numpy()
+        segments_iter, info = _whisper_model.transcribe(
+            audio_np,
+            beam_size=5,
+            language=language if language and language.lower()!= "none" else None,
+            vad_filter=use_vad,
+            vad_parameters=dict(min_silence_duration_ms=min_silence_ms),
+            word_timestamps=True,
+        )
+        segments = list(segments_iter)
+        logging.info(f"[Job] Transcription segments (with VAD={use_vad}, silence_ms={min_silence_ms}): {len(segments)}")
+
+        # VAD有効でセグメントが0の場合、VAD無しで再試行
+        if len(segments) == 0 and use_vad:
+            logging.warning("[Job] No segments detected with VAD. Retrying without VAD...")
             segments_iter, info = _whisper_model.transcribe(
                 audio_np,
                 beam_size=5,
                 language=language if language and language.lower()!= "none" else None,
-                vad_filter=use_vad,
-                vad_parameters=dict(min_silence_duration_ms=min_silence_ms),
+                vad_filter=False,
                 word_timestamps=True,
             )
             segments = list(segments_iter)
-            logging.info(f"[Job] Transcription segments (with VAD={use_vad}, silence_ms={min_silence_ms}): {len(segments)}")
-
-            # VAD有効でセグメントが0の場合、VAD無しで再試行
-            if len(segments) == 0 and use_vad:
-                logging.warning("[Job] No segments detected with VAD. Retrying without VAD...")
-                segments_iter, info = _whisper_model.transcribe(
-                    audio_np,
-                    beam_size=5,
-                    language=language if language and language.lower()!= "none" else None,
-                    vad_filter=False,
-                    word_timestamps=True,
-                )
-                segments = list(segments_iter)
-                logging.info(f"[Job] Transcription segments after retry (VAD=False): {len(segments)}")
+            logging.info(f"[Job] Transcription segments after retry (VAD=False): {len(segments)}")
 
         logging.info("[Job] Combine + speaker assignment...")
         combined = []
         prev = "UNKNOWN_SPEAKER"
         for seg in segments:
-            s_val = float(getattr(seg, "start", 0.0))
-            e_val = float(getattr(seg, "end", s_val))
-            if s_val > audio_duration:
-                logging.warning(f"Skipping segment beyond audio duration: start={s_val:.2f}s > {audio_duration:.2f}s")
+            if getattr(seg, "start", 0.0) > audio_duration:
+                logging.warning(f"Skipping segment beyond audio duration: start={seg.start:.2f}s > {audio_duration:.2f}s")
                 continue
             spk = determine_speaker(seg, diarization_result, prev, overlap_ratio_threshold)
             combined.append({
                 "speaker": spk,
-                "start": s_val,
-                "end": e_val,
-                "text": getattr(seg, "text", "").strip()
+                "start": float(seg.start),
+                "end": float(seg.end),
+                "text": seg.text.strip()
             })
             prev = spk
 
