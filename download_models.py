@@ -1,6 +1,6 @@
 """
 ビルド時モデルベイキング:
- - Systran/faster-whisper-large-v2
+ - Systran/faster-whisper-large-v3
  - pyannote/speaker-diarization-3.1 とその依存モデル
  - 実行時用の、ローカルパスに解決済みの diarization_config.yaml を生成
  - speechbrainモデルのhyperparams.yamlをオフライン用に書き換え
@@ -21,7 +21,9 @@ if not HF_TOKEN:
 
 hf_cache = Path(os.environ.get("HUGGINGFACE_HUB_CACHE", "/app/hf_home/hub"))
 models_root = Path("/app/models")
-whisper_target = models_root / "whisper-large-v2"
+
+# Whisperモデルのバージョンをv3に更新
+whisper_target = models_root / "whisper-large-v3"
 
 # --- ディレクトリ作成 ---
 models_root.mkdir(parents=True, exist_ok=True)
@@ -110,7 +112,8 @@ def rewrite_speechbrain_hyperparams(model_dir: Path, repo_id: str):
     print("hyperparams.yaml rewritten successfully.")
 
 # --- Whisperモデル ---
-copy_model_from_cache(repo_id="Systran/faster-whisper-large-v2", target_dir=whisper_target, desc="Whisper model")
+# ダウンロードするモデルをv3に更新
+copy_model_from_cache(repo_id="Systran/faster-whisper-large-v3", target_dir=whisper_target, desc="Whisper model")
 assert_exists(whisper_target / "config.json", "whisper config.json")
 
 # --- Pyannoteモデル ---

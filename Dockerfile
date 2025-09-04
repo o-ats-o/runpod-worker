@@ -18,8 +18,8 @@ WORKDIR /app
 # ビルドに必要なツールをインストール
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        python3 python3-pip python3-distutils python3-venv \
-        git curl ca-certificates ffmpeg libsndfile1 && \
+    python3 python3-pip python3-distutils python3-venv \
+    git curl ca-certificates ffmpeg libsndfile1 && \
     ln -sf /usr/bin/python3 /usr/bin/python && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
@@ -28,8 +28,8 @@ COPY requirements.txt .
 # Python依存関係をインストール
 RUN pip install --upgrade pip setuptools wheel && \
     pip install --no-cache-dir \
-        --extra-index-url https://download.pytorch.org/whl/cu121 \
-        -r requirements.txt
+    --extra-index-url https://download.pytorch.org/whl/cu121 \
+    -r requirements.txt
 
 COPY download_models.py .
 
@@ -56,14 +56,15 @@ ENV DEBIAN_FRONTEND=noninteractive \
     HF_HOME=/app/models \
     # pyannote.audioが独自に参照するキャッシュパス
     PYANNOTE_CACHE=/app/models \
-    WHISPER_LOCAL_DIR=/app/models/whisper-large-v2
+    # Whisperモデルのバージョンをv3に更新
+    WHISPER_LOCAL_DIR=/app/models/whisper-large-v3
 
 WORKDIR /app
 
 # ランタイムに必要なOSパッケージのみをインストール
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        python3 libsndfile1 ffmpeg && \
+    python3 libsndfile1 ffmpeg && \
     ln -sf /usr/bin/python3 /usr/bin/python && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
