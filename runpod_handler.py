@@ -278,27 +278,36 @@ def handler(job):
         use_vad = bool(params.get("use_vad", True))
         min_silence_ms = int(params.get("min_silence_duration_ms", 250))
         audio_np = proc_waveform.numpy()
-        segments_iter, info = _whisper_model.transcribe(
-            audio_np,
+
+        # 幻覚・反復ループを抑制するためのパラメータを追加
+        transcribe_options = dict(
             beam_size=5,
             language=language if language and language.lower()!= "none" else None,
             vad_filter=use_vad,
-            vad_parameters=dict(min_silence_duration_ms=min_silence_ms),
+            vad_parameters=dict(
+                min_silence_duration_ms=min_silence_ms,
+                threshold=0.5
+            ),
             word_timestamps=True,
+            log_prob_threshold=-1.0,
+            no_speech_threshold=0.6,
+            temperature=(0.0, 0.2, 0.4, 0.6, 0.8, 1.0),
+            condition_on_previous_text=True,
+            compression_ratio_threshold=2.4
         )
+        segments_iter, info = _whisper_model.transcribe(audio_np, **transcribe_options)
         segments = list(segments_iter)
         logging.info(f"[Job] Transcription segments (with VAD={use_vad}, silence_ms={min_silence_ms}): {len(segments)}")
 
         # VAD有効でセグメントが0の場合、VAD無しで再試行
         if len(segments) == 0 and use_vad:
             logging.warning("[Job] No segments detected with VAD. Retrying without VAD...")
+            # VAD以外の抑制パラメータは再試行時にも適用
+            transcribe_options["vad_filter"] = False
             segments_iter, info = _whisper_model.transcribe(
                 audio_np,
-                beam_size=5,
-                language=language if language and language.lower()!= "none" else None,
-                vad_filter=False,
-                word_timestamps=True,
-            )
+                **transcribe_options
+                )
             segments = list(segments_iter)
             logging.info(f"[Job] Transcription segments after retry (VAD=False): {len(segments)}")
 
