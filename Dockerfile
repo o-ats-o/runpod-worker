@@ -56,8 +56,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     HF_HOME=/app/models \
     # pyannote.audioが独自に参照するキャッシュパス
     PYANNOTE_CACHE=/app/models \
-    # Whisperモデルのバージョンをv3に更新
-    WHISPER_LOCAL_DIR=/app/models/whisper-large-v3
+    WHISPER_LOCAL_DIR=/app/models/whisper-large-v2
 
 WORKDIR /app
 

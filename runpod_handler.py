@@ -28,9 +28,8 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 DEFAULT_LANGUAGE = os.environ.get("DEFAULT_TRANSCRIBE_LANG", "ja")
 HF_TOKEN = os.environ.get("HUGGING_FACE_HUB_TOKEN") or os.environ.get("HF_TOKEN")
-# Whisperモデルのバージョンをv3に更新
-WHISPER_LOCAL_DIR = os.environ.get("WHISPER_LOCAL_DIR", "/app/models/whisper-large-v3")
-WHISPER_MODEL_NAME = os.environ.get("WHISPER_MODEL_NAME", "large-v3")
+WHISPER_LOCAL_DIR = os.environ.get("WHISPER_LOCAL_DIR", "/app/models/whisper-large-v2")
+WHISPER_MODEL_NAME = os.environ.get("WHISPER_MODEL_NAME", "large-v2")
 COMPUTE_TYPE = os.environ.get("WHISPER_COMPUTE_TYPE", "float16" if DEVICE == "cuda" else "int8")
 DIARIZATION_CONFIG_PATH = "/app/diarization_config.yaml"
 
