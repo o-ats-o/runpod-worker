@@ -56,7 +56,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     HF_HOME=/app/models \
     # pyannote.audioが独自に参照するキャッシュパス
     PYANNOTE_CACHE=/app/models \
-    WHISPER_LOCAL_DIR=/app/models/whisper-large-v2
+    WHISPER_LOCAL_DIR=/app/models/whisper-large-v2 \
+    RESEMBLE_ENHANCE_RUN_DIR=/app/models/resemble-enhance/enhancer_stage2
 
 WORKDIR /app
 
