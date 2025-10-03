@@ -4,7 +4,7 @@ speechbrain
 numpy<2.0
 faster-whisper[gpu]==1.0.3
 omegaconf==2.3.0
-pyannote.audio==3.2.0
+pyannote.audio==3.1.1
 python-dotenv
 onnxruntime-gpu==1.20.0
 packaging<25.0
