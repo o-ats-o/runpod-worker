@@ -1,4 +1,6 @@
 import os
+import shutil
+import subprocess
 import tempfile
 import warnings
 import torch
@@ -32,6 +34,7 @@ WHISPER_LOCAL_DIR = os.environ.get("WHISPER_LOCAL_DIR", "/app/models/whisper-lar
 WHISPER_MODEL_NAME = os.environ.get("WHISPER_MODEL_NAME", "large-v2")
 COMPUTE_TYPE = os.environ.get("WHISPER_COMPUTE_TYPE", "float16" if DEVICE == "cuda" else "int8")
 DIARIZATION_CONFIG_PATH = "/app/diarization_config.yaml"
+RESEMBLE_ENHANCE_RUN_DIR = Path(os.environ.get("RESEMBLE_ENHANCE_RUN_DIR", "/app/models/resemble-enhance/enhancer_stage2"))
 
 # PyTorchパフォーマンス設定
 torch.backends.cuda.matmul.allow_tf32 = True
@@ -66,6 +69,59 @@ def init_s3_client():
         logging.error(f"R2クライアントの初期化に失敗しました: {e}")
         _s3_client = None
         
+def denoise_with_resemble(input_file: str, device: str = "cuda") -> str:
+    """ResembleEnhanceのデノイザを用いて音声ファイルのノイズ除去を行う"""
+    src_path = Path(input_file)
+    if not src_path.is_file():
+        raise FileNotFoundError(f"入力ファイルが見つかりません: {input_file}")
+
+    if device == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("ResembleEnhanceの実行にはGPU(CUDA)が必要ですが利用できません。")
+
+    if not RESEMBLE_ENHANCE_RUN_DIR.exists():
+        raise FileNotFoundError(f"ResembleEnhanceのモデルディレクトリが見つかりません: {RESEMBLE_ENHANCE_RUN_DIR}")
+
+    with tempfile.TemporaryDirectory() as temp_in_dir, tempfile.TemporaryDirectory() as temp_out_dir:
+        temp_in_path = Path(temp_in_dir)
+        temp_out_path = Path(temp_out_dir)
+        temp_input_file = temp_in_path / src_path.name
+        shutil.copy2(src_path, temp_input_file)
+
+        command = [
+            "resemble-enhance",
+            str(temp_in_path),
+            str(temp_out_path),
+            "--denoise_only",
+            "--device",
+            device,
+            "--run_dir",
+            str(RESEMBLE_ENHANCE_RUN_DIR),
+        ]
+
+        logging.info("[Job] ResembleEnhance でデノイズを開始します (device=%s)", device)
+        try:
+            result = subprocess.run(command, check=True, capture_output=True, text=True)
+            if result.stderr:
+                logging.debug("[Job] ResembleEnhance stderr: %s", result.stderr.strip())
+        except FileNotFoundError as exc:
+            logging.error("'resemble-enhance' コマンドが見つかりません。ライブラリがインストールされているか確認してください。")
+            raise exc
+        except subprocess.CalledProcessError as exc:
+            logging.error("ResembleEnhance の実行に失敗しました: %s", exc.stderr)
+            raise RuntimeError(exc.stderr.strip() or "ResembleEnhance の実行に失敗しました") from exc
+
+        processed_files = list(temp_out_path.glob(f"*{src_path.name}"))
+        if not processed_files:
+            contents = [str(p) for p in temp_out_path.iterdir()]
+            logging.error("ResembleEnhance の出力が見つかりません。出力ディレクトリ: %s", contents)
+            raise RuntimeError("ResembleEnhance の出力が見つかりませんでした")
+
+        _, tmp_output_path = tempfile.mkstemp(suffix=src_path.suffix)
+        dest_path = Path(tmp_output_path)
+        shutil.copy2(processed_files[0], dest_path)
+        logging.info("[Job] ResembleEnhance によるデノイズが完了しました: %s", dest_path)
+        return str(dest_path)
+
 # --- モデル読み込みロジック ---
 def ensure_models_loaded():
     """WhisperとDiarizationモデルがロードされていることを確認する"""
@@ -249,8 +305,18 @@ def handler(job):
             logging.error(f"R2からのダウンロードに失敗しました: {e}")
             return {"error": f"R2からのダウンロードに失敗しました: {e.response['Error']['Message']}"}
 
+        denoised_tmp_path: Optional[str] = None
+        load_target_path = tmp_path
+
         try:
-            waveform, sample_rate = torchaudio.load(tmp_path)
+            denoised_tmp_path = denoise_with_resemble(tmp_path, device="cuda")
+            load_target_path = denoised_tmp_path
+        except Exception as e:
+            logging.error(f"ResembleEnhance によるデノイズに失敗しました: {e}")
+            return {"error": f"ResembleEnhance によるデノイズに失敗しました: {e}"}
+
+        try:
+            waveform, sample_rate = torchaudio.load(load_target_path)
             orig_channels = waveform.shape[0] if waveform.dim() == 2 else 1
             # 前処理: モノラル・16kHzへ変換
             proc_waveform, proc_sample_rate = preprocess_audio_to_mono_16k(waveform, sample_rate, target_rate=16000)
@@ -259,8 +325,9 @@ def handler(job):
         except Exception as e:
             return {"error": f"音声ファイルの読み込みに失敗しました: {e}"}
         finally:
-            if os.path.exists(tmp_path):
-                os.unlink(tmp_path)
+            for path in filter(None, [tmp_path, denoised_tmp_path]):
+                if path and os.path.exists(path):
+                    os.unlink(path)
 
         logging.info("[Job] Diarization...")
         diarization_input = {"waveform": proc_waveform.unsqueeze(0), "sample_rate": proc_sample_rate}

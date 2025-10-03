@@ -21,6 +21,7 @@ if not HF_TOKEN:
 
 hf_cache = Path(os.environ.get("HUGGINGFACE_HUB_CACHE", "/app/hf_home/hub"))
 models_root = Path("/app/models")
+resemble_enhance_root = models_root / "resemble-enhance"
 
 whisper_target = models_root / "whisper-large-v2"
 
@@ -32,6 +33,7 @@ hf_cache.mkdir(parents=True, exist_ok=True)
 pyannote_segmentation_target = models_root / "pyannote" / "segmentation-3.0"
 pyannote_embedding_target    = models_root / "speechbrain" / "spkrec-ecapa-voxceleb"
 config_output_path = Path("/app/diarization_config.yaml")
+resemble_enhance_run_dir = resemble_enhance_root / "enhancer_stage2"
 
 # --- ヘルパー関数 ---
 def assert_exists(path: Path, desc: str):
@@ -110,6 +112,30 @@ def rewrite_speechbrain_hyperparams(model_dir: Path, repo_id: str):
     
     print("hyperparams.yaml rewritten successfully.")
 
+
+def download_resemble_enhance_model():
+    print("\nDownloading ResembleEnhance denoiser assets...")
+    relpaths = [
+        "hparams.yaml",
+        "ds/G/latest",
+        "ds/G/default/mp_rank_00_model_states.pt",
+    ]
+    for relpath in relpaths:
+        target = resemble_enhance_run_dir / relpath
+        if target.exists():
+            print(f"  - Skipping {relpath}, already exists")
+            continue
+        repo_path = hf_hub_download(
+            repo_id="ResembleAI/resemble-enhance",
+            filename=f"enhancer_stage2/{relpath}",
+            use_auth_token=HF_TOKEN,
+            cache_dir=str(hf_cache),
+        )
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(repo_path, target)
+        print(f"  - Copied {relpath}")
+    print("ResembleEnhance denoiser assets downloaded.")
+
 # --- Whisperモデル ---
 copy_model_from_cache(repo_id="Systran/faster-whisper-large-v2", target_dir=whisper_target, desc="Whisper model")
 assert_exists(whisper_target / "config.json", "whisper config.json")
@@ -147,4 +173,5 @@ with open(config_output_path, "w") as f:
 
 assert_exists(config_output_path, "Generated diarization config")
 print("Configuration file generated successfully.")
+download_resemble_enhance_model()
 print("\nAll models baked successfully into /app/models.")

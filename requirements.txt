@@ -12,3 +12,4 @@ runpod
 huggingface_hub
 pyyaml
 boto3
+resemble-enhance
