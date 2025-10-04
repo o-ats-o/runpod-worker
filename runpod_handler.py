@@ -293,8 +293,10 @@ def handler(job):
         merge_short_threshold = float(params.get("merge_short_segment_threshold", 0.5))
         speaker_hold_time = float(params.get("speaker_hold_time", 0.8))
 
-        # R2からファイルをダウンロードするための一時ファイルを作成
-        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+        # R2のオブジェクトキーから拡張子を取得
+        suffix = Path(object_key).suffix
+        # 拡張子を維持したまま一時ファイルを作成
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
             tmp_path = tmp.name
         
         try:
