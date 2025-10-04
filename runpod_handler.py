@@ -93,11 +93,13 @@ def denoise_with_resemble(input_file: str, device: str = DEVICE) -> str:
 
     from resemble_enhance.enhancer.inference import denoise as resemble_denoise
 
+    run_dir_arg = RESEMBLE_ENHANCE_RUN_DIR if RESEMBLE_ENHANCE_RUN_DIR else None
+
     enhanced_waveform, enhanced_sr = resemble_denoise(
         dwav=waveform,
         sr=sample_rate,
         device=target_device,
-        run_dir=str(RESEMBLE_ENHANCE_RUN_DIR) if RESEMBLE_ENHANCE_RUN_DIR else None,
+        run_dir=run_dir_arg,
     )
 
     enhanced_waveform = enhanced_waveform.to("cpu")
