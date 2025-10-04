@@ -1,6 +1,4 @@
 import os
-import shutil
-import subprocess
 import tempfile
 import warnings
 import torch
@@ -69,58 +67,46 @@ def init_s3_client():
         logging.error(f"R2クライアントの初期化に失敗しました: {e}")
         _s3_client = None
         
-def denoise_with_resemble(input_file: str, device: str = "cuda") -> str:
-    """ResembleEnhanceのデノイザを用いて音声ファイルのノイズ除去を行う"""
+def denoise_with_resemble(input_file: str, device: str = DEVICE) -> str:
+    """ResembleEnhanceのDenoiserをPython API経由で実行し、一時FLACファイルとして返す"""
     src_path = Path(input_file)
     if not src_path.is_file():
         raise FileNotFoundError(f"入力ファイルが見つかりません: {input_file}")
 
-    if device == "cuda" and not torch.cuda.is_available():
+    use_cuda = device == "cuda" and torch.cuda.is_available()
+    if device == "cuda" and not use_cuda:
         raise RuntimeError("ResembleEnhanceの実行にはGPU(CUDA)が必要ですが利用できません。")
 
-    if not RESEMBLE_ENHANCE_RUN_DIR.exists():
+    if RESEMBLE_ENHANCE_RUN_DIR and not RESEMBLE_ENHANCE_RUN_DIR.exists():
         raise FileNotFoundError(f"ResembleEnhanceのモデルディレクトリが見つかりません: {RESEMBLE_ENHANCE_RUN_DIR}")
 
-    with tempfile.TemporaryDirectory() as temp_in_dir, tempfile.TemporaryDirectory() as temp_out_dir:
-        temp_in_path = Path(temp_in_dir)
-        temp_out_path = Path(temp_out_dir)
-        temp_input_file = temp_in_path / src_path.name
-        shutil.copy2(src_path, temp_input_file)
+    logging.info("[Job] ResembleEnhance でデノイズを開始します (device=%s)", device)
 
-        command = [
-            "resemble-enhance",
-            str(temp_in_path),
-            str(temp_out_path),
-            "--denoise_only",
-            "--device",
-            device,
-            "--run_dir",
-            str(RESEMBLE_ENHANCE_RUN_DIR),
-        ]
+    waveform, sample_rate = torchaudio.load(str(src_path))
+    if waveform.dim() > 1:
+        waveform = waveform.mean(dim=0, keepdim=False)
+    else:
+        waveform = waveform.squeeze(0)
+    waveform = waveform.float()
 
-        logging.info("[Job] ResembleEnhance でデノイズを開始します (device=%s)", device)
-        try:
-            result = subprocess.run(command, check=True, capture_output=True, text=True)
-            if result.stderr:
-                logging.debug("[Job] ResembleEnhance stderr: %s", result.stderr.strip())
-        except FileNotFoundError as exc:
-            logging.error("'resemble-enhance' コマンドが見つかりません。ライブラリがインストールされているか確認してください。")
-            raise exc
-        except subprocess.CalledProcessError as exc:
-            logging.error("ResembleEnhance の実行に失敗しました: %s", exc.stderr)
-            raise RuntimeError(exc.stderr.strip() or "ResembleEnhance の実行に失敗しました") from exc
+    target_device = torch.device("cuda" if use_cuda else "cpu")
 
-        processed_files = list(temp_out_path.glob(f"*{src_path.name}"))
-        if not processed_files:
-            contents = [str(p) for p in temp_out_path.iterdir()]
-            logging.error("ResembleEnhance の出力が見つかりません。出力ディレクトリ: %s", contents)
-            raise RuntimeError("ResembleEnhance の出力が見つかりませんでした")
+    from resemble_enhance.enhancer.inference import denoise as resemble_denoise
 
-        _, tmp_output_path = tempfile.mkstemp(suffix=src_path.suffix)
-        dest_path = Path(tmp_output_path)
-        shutil.copy2(processed_files[0], dest_path)
-        logging.info("[Job] ResembleEnhance によるデノイズが完了しました: %s", dest_path)
-        return str(dest_path)
+    enhanced_waveform, enhanced_sr = resemble_denoise(
+        dwav=waveform,
+        sr=sample_rate,
+        device=target_device,
+        run_dir=str(RESEMBLE_ENHANCE_RUN_DIR) if RESEMBLE_ENHANCE_RUN_DIR else None,
+    )
+
+    enhanced_waveform = enhanced_waveform.to("cpu")
+    fd, tmp_output_path = tempfile.mkstemp(suffix=".flac")
+    os.close(fd)
+    dest_path = Path(tmp_output_path)
+    torchaudio.save(str(dest_path), enhanced_waveform.unsqueeze(0), enhanced_sr, encoding="FLAC")
+    logging.info("[Job] ResembleEnhance によるデノイズが完了しました: %s", dest_path)
+    return str(dest_path)
 
 # --- モデル読み込みロジック ---
 def ensure_models_loaded():
